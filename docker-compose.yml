@@ -1,0 +1,11 @@
+# Local development only -- Postgres + Redis
+# Charon itself runs on the host via `go run main.go`
+#
+# Usage:
+#   docker-compose up -d     Start Postgres + Redis
+#   docker-compose down      Stop and remove containers
+#   docker-compose down -v   Stop and remove containers + volumes (wipes data)
+#
+# Services:
+#   postgres  - Durable store for users, sessions, verification tokens
+#   redis     - Session cache for sub-ms lookups

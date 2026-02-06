@@ -1,0 +1,5 @@
+-- Charon initial schema
+-- Tables: users, sessions, verification_tokens
+--
+-- Run against the Charon-owned database (separate from CritiQit app DB).
+-- This will be applied via a migration runner or manually during setup.
