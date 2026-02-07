@@ -25,11 +25,13 @@ func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, 
 	if err != nil {
 		return nil, err
 	}
+
 	// Ping db to make sure connection works
 	err = pool.Ping(ctx)
 	if err != nil {
 		return nil, err
 	}
+
 	return &PostgresStore{pool}, nil
 }
 
