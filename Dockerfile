@@ -1,15 +1,22 @@
-# Charon - Multi-stage build
 # Stage 1: Build the Go binary
-# Stage 2: Copy into minimal image (scratch or distroless)
-#
-# Usage:
-#   docker build -t charon .
-#   docker run -e DATABASE_URL=... -e REDIS_URL=... charon
-#
-# In a monorepo docker-compose, reference this image:
-#   services:
-#     charon:
-#       build: ./path/to/charon
-#       environment:
-#         DATABASE_URL: postgres://...
-#         REDIS_URL: redis://...
+FROM golang:1.25-alpine AS build
+
+WORKDIR /src
+
+# Copy dependency files first (cached unless go.mod/go.sum change)
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and build
+COPY . .
+RUN go build -o /bin/charon main.go
+
+# Stage 2: Minimal runtime image
+FROM alpine:3.21
+
+# wget is needed for the compose healthcheck
+RUN apk add --no-cache wget
+
+COPY --from=build /bin/charon /bin/charon
+
+ENTRYPOINT ["/bin/charon"]
