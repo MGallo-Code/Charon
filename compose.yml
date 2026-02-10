@@ -1,11 +1,78 @@
-# Local development only -- Postgres + Redis
-# Charon itself runs on the host via `go run main.go`
+# Charon auth service -- Postgres + Redis + Charon
 #
 # Usage:
-#   docker-compose up -d     Start Postgres + Redis
-#   docker-compose down      Stop and remove containers
-#   docker-compose down -v   Stop and remove containers + volumes (wipes data)
+#   docker compose up -d        Start all services
+#   docker compose up --build   Rebuild Charon and start
+#   docker compose down         Stop and remove containers
+#   docker compose down -v      Stop and remove containers + volumes (wipes data)
 #
 # Services:
-#   postgres  - Durable store for users, sessions, verification tokens
-#   redis     - Session cache for sub-ms lookups
+#   charon   - Auth service (Go)
+#   db       - PostgreSQL (durable store)
+#   redis    - Redis (session cache)
+#
+# TODO (production): Add gateway network for Kong integration,
+# remove exposed ports, add mTLS. See REQUIREMENTS.md deployment phases. SSLMODE
+services:
+  charon:
+    container_name: charon-main
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      PORT: ${PORT}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      COOKIE_SECURE: ${COOKIE_SECURE}
+    ports:
+      - "${PORT}:${PORT}"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT}/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - private
+
+  db:
+    container_name: charon-postgres
+    image: postgres:18.1-alpine3.23
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - private
+
+  redis:
+    container_name: charon-redis
+    image: redis:8.4-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - private
+
+networks:
+  private:
+    internal: true
+
+volumes:
+  db:
