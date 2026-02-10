@@ -1,9 +1,10 @@
-# Stage 1: Build the Go binary
+# Stage 1 -- Building Go bin
+
 FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 
-# Copy dependency files first (cached unless go.mod/go.sum change)
+# Copy dep files, install required deps
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -11,10 +12,10 @@ RUN go mod download
 COPY . .
 RUN go build -o /bin/charon main.go
 
-# Stage 2: Minimal runtime image
+# Stage 2 -- Runtime image gen
 FROM alpine:3.21
 
-# wget is needed for the compose healthcheck
+# wget needed for charon compose healthcheck
 RUN apk add --no-cache wget
 
 COPY --from=build /bin/charon /bin/charon
