@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/MGallo-Code/charon/internal/config"
 	"github.com/MGallo-Code/charon/internal/store"
@@ -48,8 +49,11 @@ func main() {
 
 	// Create new router
 	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(30 * time.Second))
 
 	// Handle GET req to /health, respond ok
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
