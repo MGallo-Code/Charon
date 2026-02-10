@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"embed"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +15,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
+
+// Embeds the migration files INTO the go bin
+
+//go:embed migrations/*.sql
+var migrationsDir embed.FS
 
 func main() {
 	// Set up slog to output as json
@@ -37,6 +44,17 @@ func main() {
 	}
 	// Close at end of main
 	defer ps.Close()
+
+	// Run database migrations
+	migrationsFS, err := fs.Sub(migrationsDir, "migrations")
+	if err != nil {
+		slog.Error("failed to access embedded migrations", "err", err)
+		os.Exit(1)
+	}
+	if err := ps.Migrate(ctx, migrationsFS); err != nil {
+		slog.Error("failed to run migrations", "err", err)
+		os.Exit(1)
+	}
 
 	// Create new redis store, log errors if any
 	rs, err := store.NewRedisStore(ctx, cfg.RedisURL)
