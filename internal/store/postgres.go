@@ -71,13 +71,69 @@ func (s *PostgresStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, ema
 	return err
 }
 
+// GetUserByEmail fetches a user by their email address.
+// (For login by email for verification)
+// Returns pgx.ErrNoRows if no user exists with that email.
+func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+	// Initialize user pointer
+	user := new(User)
+
+	// Query db for user info where email matches
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, email, password_hash, created_at, updated_at,
+			email_confirmed_at, phone, phone_confirmed_at,
+			first_name, last_name, oauth_provider, oauth_provider_id, avatar_url
+		FROM users WHERE email = $1;
+	`, email).Scan(
+		&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt,
+		&user.EmailConfirmedAt, &user.Phone, &user.PhoneConfirmedAt,
+		&user.FirstName, &user.LastName, &user.OAuthProvider, &user.OAuthProviderID, &user.AvatarURL,
+	)
+
+	// If err, return it
+	if err != nil {
+		return nil, err
+	}
+
+	// Otherwise, return user!
+	return user, nil
+}
+
+// GetUserByID fetches a user by their UUID.
+// For after login, profile lookups, password changes, etc...
+// Returns pgx.ErrNoRows if no user exists with that ID.
+func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
+	// Init user var
+	user := new(User)
+
+	// Attempt to fetch user by ID
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, email, password_hash, created_at, updated_at,
+			email_confirmed_at, phone, phone_confirmed_at,
+			first_name, last_name, oauth_provider, oauth_provider_id, avatar_url
+		FROM users WHERE id = $1
+	`, id).Scan(
+		&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt,
+		&user.EmailConfirmedAt, &user.Phone, &user.PhoneConfirmedAt,
+		&user.FirstName, &user.LastName, &user.OAuthProvider, &user.OAuthProviderID, &user.AvatarURL,
+	)
+
+	// If an error, return it
+	if err != nil {
+		return nil, err
+	}
+
+	// Otherwise retrn user!
+	return user, nil
+}
+
 // 5. Session queries:
 //    - CreateSession(ctx, userID, tokenHash, expiresAt, ip, userAgent) → error
 //    - GetSessionByTokenHash(ctx, tokenHash) → (session, error)
 //    - DeleteSession(ctx, tokenHash) → error
 //    - DeleteAllUserSessions(ctx, userID) → error
 //
-// Key concepts you'll use:
+// Key concepts
 //    - context.Context   -- passed into every query for timeouts/cancellation
 //    - pool.QueryRow()   -- for single-row results (login, session lookup)
 //    - pool.Exec()       -- for inserts/deletes with no return value
