@@ -4,6 +4,7 @@ go 1.25.7
 
 require (
 	github.com/go-chi/chi/v5 v5.2.5
+	github.com/gofrs/uuid/v5 v5.4.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/redis/go-redis/v9 v9.17.3
 )
