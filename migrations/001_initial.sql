@@ -1,9 +1,6 @@
 -- Charon initial schema
 -- Applied automatically by the migration runner at startup.
 
--- Incl for uuid gen
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 
 -- =~=~=~=~=~=~=~=~=~=~=~=~=
 -- USERS
@@ -40,31 +37,18 @@ CREATE TABLE IF NOT EXISTS users (
 -- =~=~=~=~=~=~=~=~=~=~=~=~=
 CREATE TABLE IF NOT EXISTS sessions (
     id UUID PRIMARY KEY,
-    
+    user_id UUID NOT NULL,
+    token_hash BYTEA UNIQUE NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    ip_address INET,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ NOT NULL
+        DEFAULT NOW(),
+
+    CONSTRAINT fk_sessions_user
+        FOREIGN KEY (user_id)
+        REFERENCES users (id)
+        ON DELETE CASCADE
 );
 
--- Columns:
---   id            UUID primary key
---   user_id       UUID, foreign key -> users(id)
---   token_hash    BYTEA — raw SHA-256 bytes (32 bytes, fixed length)
---   expires_at    TIMESTAMPTZ — when this session becomes invalid
---   ip_address    INET — Postgres has a native type for IP addresses
---   user_agent    TEXT
---   created_at    TIMESTAMPTZ, default to now()
---
--- Think about:
---   What happens to sessions if the user row is deleted? (ON DELETE CASCADE)
---   Which column will you look up sessions by? (token_hash needs an index)
---   Which column will you use to delete all sessions for a user? (user_id needs an index)
-
-
--- =~=~=~=~=~=~=~=~=~=~=~=~=
--- SESSIONS
--- =~=~=~=~=~=~=~=~=~=~=~=~=
--- Create indexes for columns you query by:
---   users(email)           — login lookup
---   sessions(token_hash)   — session validation on every request
---   sessions(user_id)      — "log out everywhere" deletes all sessions for a user
---
--- Syntax: CREATE INDEX index_name ON table_name (column_name);
--- For unique columns, the UNIQUE constraint already creates an index.
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id);
