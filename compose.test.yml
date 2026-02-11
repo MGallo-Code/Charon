@@ -1,0 +1,16 @@
+# Test database for integration tests.
+#
+# Usage:
+#   docker compose -f compose.test.yml up -d      Start test db
+#   go test ./...                                 Run tests
+#   docker compose -f compose.test.yml down       Tear down (data is gone)
+services:
+  test-db:
+    container_name: charon-test-postgres
+    image: postgres:18.1-alpine3.23
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+      POSTGRES_DB: charon_test
+    ports:
+      - "5433:5432"
