@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 
+	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -41,10 +42,16 @@ func (s *PostgresStore) Close() {
 	s.pool.Close()
 }
 
-// 4. User queries (add these as you build auth handlers):
-//    - CreateUser(ctx, email, passwordHash) → (userID, error)
-//    - GetUserByEmail(ctx, email) → (user, error)
-//
+// CreateUserByEmail inserts a new user with email + password credentials.
+// The caller has to generate the UUID v7 and Argon2id hash BEFORE calling this.
+// Returns raw pgx error, handler inspects it for unique violations (duplicate email, etc...)
+func (s *PostgresStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, email string, passwordHash string) error {
+	_, err := s.pool.Exec(ctx,
+		"INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)",
+		id, email, passwordHash)
+	return err
+}
+
 // 5. Session queries:
 //    - CreateSession(ctx, userID, tokenHash, expiresAt, ip, userAgent) → error
 //    - GetSessionByTokenHash(ctx, tokenHash) → (session, error)
