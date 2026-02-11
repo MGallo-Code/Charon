@@ -7,10 +7,29 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// User represents a row in the users table.
+// Nullable columns are pointers — nil means SQL NULL.
+type User struct {
+	ID               uuid.UUID
+	Email            *string
+	Phone            *string
+	EmailConfirmedAt *time.Time
+	PhoneConfirmedAt *time.Time
+	FirstName        *string
+	LastName         *string
+	PasswordHash     string
+	OAuthProvider    *string
+	OAuthProviderID  *string
+	AvatarURL        *string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
 
 // The store used by program to connect with Postgres db
 type PostgresStore struct {
