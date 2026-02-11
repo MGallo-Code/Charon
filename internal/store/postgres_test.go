@@ -157,7 +157,6 @@ func TestCreateUserByEmail(t *testing.T) {
 
 	// Less abt testing UNIQUE constraint, more just making sure errors are returned by func
 	t.Run("returns error on duplicate email", func(t *testing.T) {
-		// Set vars, cleanup emails under same value
 		email := "dup_test@example.com"
 		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
 
@@ -170,6 +169,85 @@ func TestCreateUserByEmail(t *testing.T) {
 		// Report if no err
 		if err == nil {
 			t.Fatal("expected error for duplicate email, got nil")
+		}
+	})
+}
+
+// --- GetUserByEmail ---
+
+func TestGetUserByEmail(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns correct user", func(t *testing.T) {
+		email := "get_by_email@example.com"
+		hash := "argon2id$fakehash"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		// Create user
+		id := mustCreateUser(t, ctx, email, hash)
+
+		// Attempt to get user by email
+		user, err := testStore.GetUserByEmail(ctx, email)
+		if err != nil {
+			t.Fatalf("GetUserByEmail failed: %v", err)
+		}
+
+		// If user fetched, validate their fields
+		if user.ID != id {
+			t.Errorf("id: expected %v, got %v", id, user.ID)
+		}
+		if user.Email == nil || *user.Email != email {
+			t.Errorf("email: expected %q, got %v", email, user.Email)
+		}
+		if user.PasswordHash != hash {
+			t.Errorf("password_hash: expected %q, got %q", hash, user.PasswordHash)
+		}
+	})
+
+	t.Run("returns error for nonexistent email", func(t *testing.T) {
+		_, err := testStore.GetUserByEmail(ctx, "nobody@example.com")
+		if err == nil {
+			t.Fatal("expected error for nonexistent email, got nil")
+		}
+	})
+}
+
+// --- GetUserByID ---
+
+func TestGetUserByID(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns correct user", func(t *testing.T) {
+		email := "get_by_id@example.com"
+		hash := "argon2id$fakehash"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		// Create user w/ email
+		id := mustCreateUser(t, ctx, email, hash)
+
+		// Attempt to get user by ID
+		user, err := testStore.GetUserByID(ctx, id)
+		if err != nil {
+			t.Fatalf("GetUserByID failed: %v", err)
+		}
+
+		// Validate returned user vals
+		if user.ID != id {
+			t.Errorf("id: expected %v, got %v", id, user.ID)
+		}
+		if user.Email == nil || *user.Email != email {
+			t.Errorf("email: expected %q, got %v", email, user.Email)
+		}
+		if user.PasswordHash != hash {
+			t.Errorf("password_hash: expected %q, got %q", hash, user.PasswordHash)
+		}
+	})
+
+	t.Run("returns error for nonexistent ID", func(t *testing.T) {
+		fakeID, _ := uuid.NewV7()
+		_, err := testStore.GetUserByID(ctx, fakeID)
+		if err == nil {
+			t.Fatal("expected error for nonexistent ID, got nil")
 		}
 	})
 }
