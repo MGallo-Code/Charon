@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-// Define structure for env config variables
+// Config holds all env configuration vars for Charon.
 type Config struct {
 	DatabaseURL  string
 	RedisURL     string
@@ -15,6 +15,8 @@ type Config struct {
 	CookieSecure bool
 }
 
+// LoadConfig reads environment variables and returns a validated Config.
+// Returns an error if required variables (DATABASE_URL, REDIS_URL) are missing.
 func LoadConfig() (*Config, error) {
 	// Create config obj
 	cfg := &Config{}

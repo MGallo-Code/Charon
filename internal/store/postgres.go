@@ -31,14 +31,13 @@ type User struct {
 	UpdatedAt        time.Time
 }
 
-// The store used by program to connect with Postgres db
+// PostgresStore wraps a pgxpool connection pool for database ops
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresStore creates and returns a verified connection pool
-// to PostgreSQL wrapped in a storeand returns a ready-to-use store.
-// Call once at startup from main.go...the returned store is safe for concurrent use.
+// NewPostgresStore creates and returns a VERIFIED connection pool to PostgreSQL.
+// Call once at startup from main.go. Given store safe for concurrent use...
 func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, error) {
 	// Create a pool w/ database url, return if err
 	pool, err := pgxpool.New(ctx, databaseURL)
@@ -56,7 +55,7 @@ func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, 
 }
 
 // Close shuts down the connection pool and releases all resources.
-// Supposed to call via defer in main.go after creating the store.
+// Call using defer in main.go after creating the store.
 func (s *PostgresStore) Close() {
 	s.pool.Close()
 }
@@ -123,7 +122,7 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 		return nil, err
 	}
 
-	// Otherwise retrn user!
+	// Otherwise return user!
 	return user, nil
 }
 
