@@ -1,6 +1,87 @@
 // password.go -- Password hashing and verification using Argon2id.
-//
-// Argon2id is GPU-resistant and recommended over bcrypt.
-// Uses golang.org/x/crypto/argon2.
 // All password comparisons use constant-time comparison (crypto/subtle).
+
 package auth
+
+import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"fmt"
+	"strings"
+
+	"golang.org/x/crypto/argon2"
+)
+
+const (
+	argonSaltLen = 16
+	argonTime    = uint32(3)
+	argonMemory  = uint32(64 * 1024)
+	argonThreads = uint8(2)
+	argonKeyLen  = uint32(32)
+)
+
+// HashPassword takes a plaintext password and returns encoded Argon2id hash string.
+// Format: $argon2id$v=19$m=65536,t=3,p=2$<base64 salt>$<base64 hash>
+func HashPassword(password string) (string, error) {
+	// Gen 16-byte random salt
+	salt := make([]byte, argonSaltLen)
+	_, err := rand.Read(salt)
+	if err != nil {
+		return "", err
+	}
+
+	// Derive hash
+	hash := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+
+	// Encode as PHC format string
+	encoded := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version,
+		argonMemory, argonTime, argonThreads,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(hash),
+	)
+
+	return encoded, nil
+}
+
+// VerifyPassword checks a plaintext password against an encoded Argon2id hash.
+// Extracts params from the stored hash so old passwords still verify if params change.
+// Uses constant-time comparison to prevent timing attacks.
+func VerifyPassword(password, encodedHash string) (bool, error) {
+	// Split PHC string
+	// Format: $argon2id$v=19$m=65536,t=3,p=2$<base64 salt>$<base64 hash>
+	parts := strings.Split(encodedHash, "$")
+	// Make sure string divided into 6 parts
+	if len(parts) != 6 {
+		return false, fmt.Errorf("invalid hash format")
+	}
+
+	// Check to make sure using correct algorithm
+	if parts[1] != "argon2id" {
+		return false, fmt.Errorf("unsupported algorithm: %s", parts[1])
+	}
+
+	// init vars, scan string and pull values out from string
+	var memory, time uint32
+	var threads uint8
+	fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads)
+
+	// Decode salt string, return any errors
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return false, err
+	}
+
+	// Decode hash to string
+	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil {
+		return false, err
+	}
+
+	// Re-derive hash with extracted params
+	hash := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(expectedHash)))
+
+	// Compare pwds w/ constant time for timing attacks
+	return subtle.ConstantTimeCompare(hash, expectedHash) == 1, nil
+}
