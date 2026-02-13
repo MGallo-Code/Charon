@@ -1,4 +1,4 @@
-.PHONY: run build test
+.PHONY: run build test vet tidy
 
 run:
 	go run main.go
@@ -6,7 +6,15 @@ run:
 build:
 	go build -o charon main.go
 
+vet:
+	go vet ./...
+
+tidy:
+	go mod tidy
+
 test:
+	go mod tidy
+	go vet ./...
 	docker compose -f compose.test.yml up -d
 	@echo "Waiting for Postgres..." && sleep 2
-	go test ./... ; docker compose -f compose.test.yml down
+	go test -race ./... ; docker compose -f compose.test.yml down
