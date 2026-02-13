@@ -65,7 +65,10 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 	// init vars, scan string and pull values out from string
 	var memory, time uint32
 	var threads uint8
-	fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads)
+	_, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads)
+	if err != nil {
+		return false, err
+	}
 
 	// Decode salt string, return any errors
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
