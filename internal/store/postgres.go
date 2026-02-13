@@ -31,6 +31,18 @@ type User struct {
 	UpdatedAt        time.Time
 }
 
+// Session represents a row in the sessions table.
+// Nullable columns are pointers — nil means SQL NULL.
+type Session struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	TokenHash []byte
+	ExpiresAt time.Time
+	IPAddress *string
+	UserAgent *string
+	CreatedAt time.Time
+}
+
 // PostgresStore wraps a pgxpool connection pool for database ops
 type PostgresStore struct {
 	pool *pgxpool.Pool
