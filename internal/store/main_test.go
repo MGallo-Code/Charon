@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/gofrs/uuid/v5"
 )
@@ -70,4 +71,17 @@ func cleanupUsersByEmail(t *testing.T, ctx context.Context, emails ...string) {
 	for _, email := range emails {
 		testStore.pool.Exec(ctx, "DELETE FROM users WHERE email = $1", email)
 	}
+}
+
+// Creates a session in db for given user, returns session ID
+func mustCreateSession(t *testing.T, ctx context.Context, userID uuid.UUID, tokenHash []byte, expiresAt time.Time) uuid.UUID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("failed to generate session UUID: %v", err)
+	}
+	if err := testStore.CreateSession(ctx, id, userID, tokenHash, expiresAt, nil, nil); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	return id
 }

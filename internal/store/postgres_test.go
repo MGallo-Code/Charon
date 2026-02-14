@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"testing"
 	"time"
 
@@ -194,6 +195,248 @@ func TestGetUserByID(t *testing.T) {
 		_, err := testStore.GetUserByID(ctx, fakeID)
 		if err == nil {
 			t.Fatal("expected error for nonexistent ID, got nil")
+		}
+	})
+}
+
+// --- CreateSession ---
+
+func TestCreateSession(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("stores session with correct values", func(t *testing.T) {
+		email := "session_create@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		// Need a real user (foreign key constraint)
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-create"))
+		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
+		ip := "192.168.1.1"
+		ua := "Mozilla/5.0"
+
+		sessionID, _ := uuid.NewV7()
+		err := testStore.CreateSession(ctx, sessionID, userID, tokenHash[:], expiresAt, &ip, &ua)
+		if err != nil {
+			t.Fatalf("CreateSession failed: %v", err)
+		}
+
+		// Verify session was stored correctly via direct query, as usual log errors...
+		var (
+			dbID        uuid.UUID
+			dbUserID    uuid.UUID
+			dbTokenHash []byte
+			dbExpiresAt time.Time
+			dbIP        *string
+			dbUA        *string
+			dbCreatedAt time.Time
+		)
+		err = testStore.pool.QueryRow(ctx, `
+			SELECT 
+				id, user_id, token_hash, expires_at, ip_address::TEXT, user_agent, created_at
+			FROM sessions
+			WHERE id = $1
+		`, sessionID).Scan(&dbID, &dbUserID, &dbTokenHash, &dbExpiresAt, &dbIP, &dbUA, &dbCreatedAt)
+		if err != nil {
+			t.Fatalf("querying session: %v", err)
+		}
+
+		if dbID != sessionID {
+			t.Errorf("id: expected %v, got %v", sessionID, dbID)
+		}
+		if dbUserID != userID {
+			t.Errorf("user_id: expected %v, got %v", userID, dbUserID)
+		}
+		if string(dbTokenHash) != string(tokenHash[:]) {
+			t.Error("token_hash does not match")
+		}
+		if !dbExpiresAt.Equal(expiresAt) {
+			t.Errorf("expires_at: expected %v, got %v", expiresAt, dbExpiresAt)
+		}
+		if dbIP == nil || *dbIP != "192.168.1.1/32" {
+			t.Errorf("ip_address: expected 192.168.1.1/32, got %v", dbIP)
+		}
+		if dbUA == nil || *dbUA != "Mozilla/5.0" {
+			t.Errorf("user_agent: expected Mozilla/5.0, got %v", dbUA)
+		}
+		if dbCreatedAt.IsZero() {
+			t.Error("created_at was not set")
+		}
+	})
+
+	t.Run("stores session with nil optional fields", func(t *testing.T) {
+		email := "session_create_nil@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-nil"))
+		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
+
+		sessionID, _ := uuid.NewV7()
+		err := testStore.CreateSession(ctx, sessionID, userID, tokenHash[:], expiresAt, nil, nil)
+		if err != nil {
+			t.Fatalf("CreateSession failed: %v", err)
+		}
+
+		// Verify nullable fields are NULL
+		var dbIP *string
+		var dbUA *string
+		err = testStore.pool.QueryRow(ctx,
+			"SELECT ip_address, user_agent FROM sessions WHERE id = $1",
+			sessionID,
+		).Scan(&dbIP, &dbUA)
+		if err != nil {
+			t.Fatalf("querying session: %v", err)
+		}
+		if dbIP != nil {
+			t.Errorf("ip_address should be NULL, got %v", dbIP)
+		}
+		if dbUA != nil {
+			t.Errorf("user_agent should be NULL, got %v", dbUA)
+		}
+	})
+
+	t.Run("returns error for duplicate token hash", func(t *testing.T) {
+		email := "session_dup_hash@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-dup"))
+		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
+
+		mustCreateSession(t, ctx, userID, tokenHash[:], expiresAt)
+
+		// Attempt to create another session with same token hash
+		id2, _ := uuid.NewV7()
+		err := testStore.CreateSession(ctx, id2, userID, tokenHash[:], expiresAt, nil, nil)
+		if err == nil {
+			t.Fatal("expected error for duplicate token_hash, got nil")
+		}
+	})
+}
+
+// --- GetSessionByTokenHash ---
+
+func TestGetSessionByTokenHash(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns valid session", func(t *testing.T) {
+		email := "session_get@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-get"))
+		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
+		sessionID := mustCreateSession(t, ctx, userID, tokenHash[:], expiresAt)
+
+		session, err := testStore.GetSessionByTokenHash(ctx, tokenHash[:])
+		if err != nil {
+			t.Fatalf("GetSessionByTokenHash failed: %v", err)
+		}
+
+		if session.ID != sessionID {
+			t.Errorf("id: expected %v, got %v", sessionID, session.ID)
+		}
+		if session.UserID != userID {
+			t.Errorf("user_id: expected %v, got %v", userID, session.UserID)
+		}
+		if !session.ExpiresAt.Equal(expiresAt) {
+			t.Errorf("expires_at: expected %v, got %v", expiresAt, session.ExpiresAt)
+		}
+	})
+
+	t.Run("does not return expired session", func(t *testing.T) {
+		email := "session_expired@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-expired"))
+		// Expired 1 hour ago
+		expiresAt := time.Now().Add(-1 * time.Hour).Truncate(time.Microsecond)
+		mustCreateSession(t, ctx, userID, tokenHash[:], expiresAt)
+
+		_, err := testStore.GetSessionByTokenHash(ctx, tokenHash[:])
+		if err == nil {
+			t.Fatal("expected error for expired session, got nil")
+		}
+	})
+
+	t.Run("returns error for nonexistent token hash", func(t *testing.T) {
+		fakeHash := sha256.Sum256([]byte("nonexistent"))
+		_, err := testStore.GetSessionByTokenHash(ctx, fakeHash[:])
+		if err == nil {
+			t.Fatal("expected error for nonexistent token hash, got nil")
+		}
+	})
+}
+
+// --- DeleteSession (Postgres) ---
+
+func TestDeleteSessionPG(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("removes session by token hash", func(t *testing.T) {
+		email := "session_delete@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-delete"))
+		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
+		mustCreateSession(t, ctx, userID, tokenHash[:], expiresAt)
+
+		err := testStore.DeleteSession(ctx, tokenHash[:])
+		if err != nil {
+			t.Fatalf("DeleteSession failed: %v", err)
+		}
+
+		// Verify it's gone
+		_, err = testStore.GetSessionByTokenHash(ctx, tokenHash[:])
+		if err == nil {
+			t.Error("expected error after deleting session, got nil")
+		}
+	})
+}
+
+// --- DeleteAllUserSessions (Postgres) ---
+
+func TestDeleteAllUserSessionsPG(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("removes all sessions for a user", func(t *testing.T) {
+		email1 := "session_delall_a@example.com"
+		email2 := "session_delall_b@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email1, email2) })
+
+		userA := mustCreateUser(t, ctx, email1, "fakehash")
+		userB := mustCreateUser(t, ctx, email2, "fakehash")
+
+		hashA1 := sha256.Sum256([]byte("token-a1"))
+		hashA2 := sha256.Sum256([]byte("token-a2"))
+		hashB1 := sha256.Sum256([]byte("token-b1"))
+		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
+
+		mustCreateSession(t, ctx, userA, hashA1[:], expiresAt)
+		mustCreateSession(t, ctx, userA, hashA2[:], expiresAt)
+		mustCreateSession(t, ctx, userB, hashB1[:], expiresAt)
+
+		// Delete all of userA's sessions
+		err := testStore.DeleteAllUserSessions(ctx, userA)
+		if err != nil {
+			t.Fatalf("DeleteAllUserSessions failed: %v", err)
+		}
+
+		// Both of userA's sessions should be gone
+		if _, err := testStore.GetSessionByTokenHash(ctx, hashA1[:]); err == nil {
+			t.Error("expected session hashA1 to be deleted")
+		}
+		if _, err := testStore.GetSessionByTokenHash(ctx, hashA2[:]); err == nil {
+			t.Error("expected session hashA2 to be deleted")
+		}
+
+		// UserB's session should still exist
+		_, err = testStore.GetSessionByTokenHash(ctx, hashB1[:])
+		if err != nil {
+			t.Errorf("userB's session should not be deleted: %v", err)
 		}
 	})
 }
