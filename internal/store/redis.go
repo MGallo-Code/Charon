@@ -27,7 +27,7 @@ func NewRedisStore(ctx context.Context, redisURL string) (*RedisStore, error) {
 	// Parse redisURL to get option values, if err return it
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing redis db url: %w", err)
 	}
 
 	// Create new redis client
@@ -36,7 +36,7 @@ func NewRedisStore(ctx context.Context, redisURL string) (*RedisStore, error) {
 	// Try and test client to ensure it works correctly
 	err = rdb.Ping(ctx).Err()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pinging redis: %w", err)
 	}
 
 	return &RedisStore{rdb}, nil
@@ -45,8 +45,10 @@ func NewRedisStore(ctx context.Context, redisURL string) (*RedisStore, error) {
 // Close shuts down the Redis client and releases all resources.
 // Should be called via defer in main.go after creating the store.
 func (s *RedisStore) Close() error {
-	err := s.rdb.Close()
-	return err
+	if err := s.rdb.Close(); err != nil {
+		return fmt.Errorf("closing redis: %w", err)
+	}
+	return nil
 }
 
 // SetSession caches a session in Redis with given TTL (in seconds).

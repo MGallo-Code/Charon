@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,13 +25,13 @@ func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, 
 	// Create a pool w/ database url, return if err
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating connection pool: %w", err)
 	}
 
 	// Ping db to make sure connection works
 	err = pool.Ping(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 
 	return &PostgresStore{pool}, nil
@@ -48,7 +50,10 @@ func (s *PostgresStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, ema
 	_, err := s.pool.Exec(ctx,
 		"INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)",
 		id, email, passwordHash)
-	return err
+	if err != nil {
+		return fmt.Errorf("creating user by email: %w", err)
+	}
+	return nil
 }
 
 // GetUserByEmail fetches a user by their email address.
@@ -72,7 +77,7 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 
 	// If err, return it
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetching user by email: %w", err)
 	}
 
 	// Otherwise, return user!
@@ -100,22 +105,43 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 
 	// If an error, return it
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetching user by id: %w", err)
 	}
 
 	// Otherwise return user!
 	return user, nil
 }
 
-// 5. Session queries:
-//    - CreateSession(ctx, userID, tokenHash, expiresAt, ip, userAgent) → error
-//    - GetSessionByTokenHash(ctx, tokenHash) → (session, error)
-//    - DeleteSession(ctx, tokenHash) → error
-//    - DeleteAllUserSessions(ctx, userID) → error
-//
-// Key concepts
-//    - context.Context   -- passed into every query for timeouts/cancellation
-//    - pool.QueryRow()   -- for single-row results (login, session lookup)
-//    - pool.Exec()       -- for inserts/deletes with no return value
-//    - .Scan(&vars)      -- reads query results into Go variables
-//    - defer rows.Close() -- always close row iterators when done
+// CreateSession inserts a new session row in the sessions table.
+// Caller generates the UUID v7, hashes the token (SHA-256), and sets expiresAt.
+// ip and userAgent are optional (nullable) — pass nil to omit.
+func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, expiresAt time.Time, ip *string, userAgent *string) error {
+	// INSERT into sessions table
+	_, err := s.pool.Exec()
+	if err != nil {
+		return fmt.Errorf("")
+	}
+
+	// Columns: id, user_id, token_hash, expires_at, ip_address, user_agent
+	// created_at is DEFAULT NOW() in the schema
+}
+
+// GetSessionByTokenHash fetches a session by its hashed token.
+// Only returns sessions that have not expired (WHERE expires_at > NOW()).
+// Returns pgx.ErrNoRows if no valid session exists with that hash.
+func (s *PostgresStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*Session, error) {
+	// SELECT all session columns WHERE token_hash = $1 AND expires_at > NOW()
+	// Scan into a Session struct
+	// Return pointer to session or error
+}
+
+// DeleteSession removes a single session by its hashed token.
+func (s *PostgresStore) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	// DELETE FROM sessions WHERE token_hash = $1
+}
+
+// DeleteAllUserSessions removes all sessions for a given user.
+// Used for "log out everywhere" or after a password change.
+func (s *PostgresStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error {
+	// DELETE FROM sessions WHERE user_id = $1
+}

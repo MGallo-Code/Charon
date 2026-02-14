@@ -28,7 +28,7 @@ func HashPassword(password string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	_, err := rand.Read(salt)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("generating salt: %w", err)
 	}
 
 	// Derive hash
@@ -67,19 +67,19 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 	var threads uint8
 	_, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("parsing hash params: %w", err)
 	}
 
 	// Decode salt string, return any errors
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("decoding salt: %w", err)
 	}
 
 	// Decode hash to string
 	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("decoding hash: %w", err)
 	}
 
 	// Re-derive hash with extracted params
