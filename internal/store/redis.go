@@ -15,13 +15,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// redisSession is the JSON shape stored in Redis for cached sessions.
-// Only the fields needed for fast session validation — full metadata lives in Postgres.
-type redisSession struct {
-	UserID    string    `json:"user_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
 // RedisStore wraps a Redis client for session cache operations.
 type RedisStore struct {
 	rdb *redis.Client
@@ -60,8 +53,8 @@ func (s *RedisStore) Close() error {
 // Also tracks token hash in per-user Set for bulk deletion.
 func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionData Session, ttl int) error {
 	// Put session data into json string format for redis-structured session obj
-	cacheOut, err := json.Marshal(redisSession{
-		UserID:    sessionData.UserID.String(),
+	cacheOut, err := json.Marshal(CachedSession{
+		UserID:    sessionData.UserID,
 		ExpiresAt: sessionData.ExpiresAt,
 	})
 	if err != nil {
@@ -89,27 +82,67 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 	// Exec pipeline cmds, return any err
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("executing session: %w", err)
+		return fmt.Errorf("caching session: %w", err)
 	}
 	return nil
 }
 
 // GetSession retrieves a cached session by its token hash.
-// Returns error if session not found or if Redis unavailable.
-func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (Session, error) {
-	// TODO: implement
-	return Session{}, fmt.Errorf("GetSession not implemented")
+// Returns nil if session not found or if Redis unavailable.
+func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedSession, error) {
+	// Attempt to get session JSON from Redis
+	raw, err := s.rdb.Get(ctx, fmt.Sprintf("session:%s", tokenHash)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("fetching session: %w", err)
+	}
+
+	// Unmarshal JSON into CachedSession
+	var cached CachedSession
+	if err := json.Unmarshal([]byte(raw), &cached); err != nil {
+		return nil, fmt.Errorf("parsing session: %w", err)
+	}
+
+	return &cached, nil
 }
 
 // DeleteSession removes a single session from cache by its token hash.
-func (s *RedisStore) DeleteSession(ctx context.Context, tokenHash string) error {
-	// TODO: implement
-	return fmt.Errorf("DeleteSession not implemented")
+// Also removes the token hash from the user's tracking Set.
+func (s *RedisStore) DeleteSession(ctx context.Context, tokenHash string, userID uuid.UUID) error {
+	pipe := s.rdb.TxPipeline()
+
+	// Delete session data
+	pipe.Del(ctx, fmt.Sprintf("session:%s", tokenHash))
+	// Remove token hash from user's sessions set
+	pipe.SRem(ctx, fmt.Sprintf("user_sessions:%s", userID), tokenHash)
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("deleting session: %w", err)
+	}
+	return nil
 }
 
 // DeleteAllUserSessions removes all cached sessions for given user.
 // Uses per-user Redis Set to track which token hashes belong to user.
 func (s *RedisStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error {
-	// TODO: implement
-	return fmt.Errorf("DeleteAllUserSessions not implemented")
+	setKey := fmt.Sprintf("user_sessions:%s", userID)
+
+	// Get all token hashes for this user
+	hashes, err := s.rdb.SMembers(ctx, setKey).Result()
+	if err != nil {
+		return fmt.Errorf("fetching user sessions: %w", err)
+	}
+
+	// Delete all session keys + the set itself in one atomic pipeline
+	pipe := s.rdb.TxPipeline()
+	for _, hash := range hashes {
+		pipe.Del(ctx, fmt.Sprintf("session:%s", hash))
+	}
+	pipe.Del(ctx, setKey)
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("deleting user sessions: %w", err)
+	}
+	return nil
 }

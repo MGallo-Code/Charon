@@ -22,7 +22,7 @@ func TestSetAndGetSession(t *testing.T) {
 			ExpiresAt: time.Now().Add(1 * time.Hour).Truncate(time.Second),
 		}
 		t.Cleanup(func() {
-			testRedis.DeleteSession(ctx, tokenHash)
+			testRedis.DeleteSession(ctx, tokenHash, userID)
 		})
 
 		// Store session
@@ -53,9 +53,12 @@ func TestGetSessionMiss(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns error for nonexistent key", func(t *testing.T) {
-		_, err := testRedis.GetSession(ctx, "nonexistent_token_hash")
+		got, err := testRedis.GetSession(ctx, "nonexistent_token_hash")
 		if err == nil {
 			t.Fatal("expected error for nonexistent session, got nil")
+		}
+		if got != nil {
+			t.Error("expected nil session on miss")
 		}
 	})
 }
@@ -77,7 +80,7 @@ func TestDeleteSession(t *testing.T) {
 		if err := testRedis.SetSession(ctx, tokenHash, session, 3600); err != nil {
 			t.Fatalf("SetSession failed: %v", err)
 		}
-		if err := testRedis.DeleteSession(ctx, tokenHash); err != nil {
+		if err := testRedis.DeleteSession(ctx, tokenHash, userID); err != nil {
 			t.Fatalf("DeleteSession failed: %v", err)
 		}
 
@@ -103,9 +106,9 @@ func TestDeleteAllUserSessions(t *testing.T) {
 		hashOther := "testhash_user_b"
 
 		t.Cleanup(func() {
-			testRedis.DeleteSession(ctx, hash1)
-			testRedis.DeleteSession(ctx, hash2)
-			testRedis.DeleteSession(ctx, hashOther)
+			testRedis.DeleteSession(ctx, hash1, userID)
+			testRedis.DeleteSession(ctx, hash2, userID)
+			testRedis.DeleteSession(ctx, hashOther, otherUserID)
 		})
 
 		// Create two sessions for userID, one for otherUserID

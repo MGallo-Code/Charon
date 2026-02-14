@@ -37,3 +37,10 @@ type Session struct {
 	UserAgent *string
 	CreatedAt time.Time
 }
+
+// CachedSession is the JSON shape stored in Redis for cached sessions.
+// Only the fields needed for fast session validation — full metadata lives in Postgres.
+type CachedSession struct {
+	UserID    uuid.UUID `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
