@@ -16,7 +16,8 @@ RUN go build -o /bin/charon main.go
 FROM alpine:3.21
 
 # wget needed for charon compose healthcheck
-RUN apk add --no-cache wget
+RUN apk add --no-cache wget tzdata
+ENV TZ=UTC
 
 COPY --from=build /bin/charon /bin/charon
 

@@ -9,6 +9,7 @@ services:
     container_name: charon-test-postgres
     image: postgres:18.1-alpine3.23
     environment:
+      TZ: "UTC"
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_pass
       POSTGRES_DB: charon_test
@@ -18,5 +19,7 @@ services:
   test-redis:
     container_name: charon-test-redis
     image: redis:8.4-alpine
+    environment:
+      TZ: "UTC"
     ports:
       - "6380:6379"
