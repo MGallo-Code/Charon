@@ -47,9 +47,12 @@ func (s *PostgresStore) Close() {
 // The caller has to generate the UUID v7 and Argon2id hash BEFORE calling this.
 // Returns raw pgx error, handler inspects it for unique violations (duplicate email, etc...)
 func (s *PostgresStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, email string, passwordHash string) error {
-	_, err := s.pool.Exec(ctx,
-		"INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)",
-		id, email, passwordHash)
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO users
+			(id, email, password_hash)
+		VALUES
+			($1, $2, $3)
+		`, id, email, passwordHash)
 	if err != nil {
 		return fmt.Errorf("creating user by email: %w", err)
 	}
@@ -68,7 +71,8 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 		SELECT id, email, password_hash, created_at, updated_at,
 			email_confirmed_at, phone, phone_confirmed_at,
 			first_name, last_name, oauth_provider, oauth_provider_id, avatar_url
-		FROM users WHERE email = $1;
+		FROM users
+		WHERE email = $1;
 	`, email).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt,
 		&user.EmailConfirmedAt, &user.Phone, &user.PhoneConfirmedAt,
@@ -96,7 +100,8 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 		SELECT id, email, password_hash, created_at, updated_at,
 			email_confirmed_at, phone, phone_confirmed_at,
 			first_name, last_name, oauth_provider, oauth_provider_id, avatar_url
-		FROM users WHERE id = $1
+		FROM users
+		WHERE id = $1
 	`, id).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt,
 		&user.EmailConfirmedAt, &user.Phone, &user.PhoneConfirmedAt,
@@ -116,14 +121,18 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 // Caller generates the UUID v7, hashes the token (SHA-256), and sets expiresAt.
 // ip and userAgent are optional (nullable) — pass nil to omit.
 func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, expiresAt time.Time, ip *string, userAgent *string) error {
-	// INSERT into sessions table
-	_, err := s.pool.Exec()
+	// Insert session into pg table
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO sessions 
+			(id, user_id, token_hash, expires_at, ip_address, user_agent)
+		VALUES
+			($1, $2, $3, $4, $5, $6)
+	`, id, userID, tokenHash, expiresAt, ip, userAgent)
+	// if err, report!
 	if err != nil {
-		return fmt.Errorf("")
+		return fmt.Errorf("inserting session: %w", err)
 	}
-
-	// Columns: id, user_id, token_hash, expires_at, ip_address, user_agent
-	// created_at is DEFAULT NOW() in the schema
+	return nil
 }
 
 // GetSessionByTokenHash fetches a session by its hashed token.
@@ -133,15 +142,18 @@ func (s *PostgresStore) GetSessionByTokenHash(ctx context.Context, tokenHash []b
 	// SELECT all session columns WHERE token_hash = $1 AND expires_at > NOW()
 	// Scan into a Session struct
 	// Return pointer to session or error
+	return nil, nil
 }
 
 // DeleteSession removes a single session by its hashed token.
 func (s *PostgresStore) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	// DELETE FROM sessions WHERE token_hash = $1
+	return nil
 }
 
 // DeleteAllUserSessions removes all sessions for a given user.
 // Used for "log out everywhere" or after a password change.
 func (s *PostgresStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error {
 	// DELETE FROM sessions WHERE user_id = $1
+	return nil
 }
