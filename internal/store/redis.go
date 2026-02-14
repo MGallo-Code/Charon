@@ -90,7 +90,7 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 // GetSession retrieves a cached session by its token hash.
 // Returns nil if session not found or if Redis unavailable.
 func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedSession, error) {
-	// Attempt to get session JSON from Redis
+	// Attempt to get session JSON from redis cache
 	raw, err := s.rdb.Get(ctx, fmt.Sprintf("session:%s", tokenHash)).Result()
 	if err != nil {
 		return nil, fmt.Errorf("fetching session: %w", err)
@@ -133,13 +133,14 @@ func (s *RedisStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID
 		return fmt.Errorf("fetching user sessions: %w", err)
 	}
 
-	// Delete all session keys + the set itself in one atomic pipeline
+	// Delete all session keys + set itself in one atomic pipeline
 	pipe := s.rdb.TxPipeline()
 	for _, hash := range hashes {
 		pipe.Del(ctx, fmt.Sprintf("session:%s", hash))
 	}
 	pipe.Del(ctx, setKey)
 
+	// Gogogo do it
 	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("deleting user sessions: %w", err)
