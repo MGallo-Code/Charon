@@ -64,7 +64,7 @@ func (s *PostgresStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, ema
 // Returns pgx.ErrNoRows if no user exists with that email.
 func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	// Initialize user pointer
-	user := new(User)
+	user := &User{}
 
 	// Query db for user info where email matches
 	err := s.pool.QueryRow(ctx, `
@@ -93,7 +93,7 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 // Returns pgx.ErrNoRows if no user exists with that ID.
 func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	// Init user var
-	user := new(User)
+	user := &User{}
 
 	// Attempt to fetch user by ID
 	err := s.pool.QueryRow(ctx, `
