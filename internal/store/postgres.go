@@ -139,21 +139,47 @@ func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID 
 // Only returns sessions that have not expired (WHERE expires_at > NOW()).
 // Returns pgx.ErrNoRows if no valid session exists with that hash.
 func (s *PostgresStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*Session, error) {
-	// SELECT all session columns WHERE token_hash = $1 AND expires_at > NOW()
-	// Scan into a Session struct
-	// Return pointer to session or error
-	return nil, nil
+	// Init sesh obj..
+	session := &Session{}
+	// Fetch matching NON-EXPIRED sessions
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			id, user_id, token_hash, expires_at, ip_address, user_agent, created_at
+		FROM sessions
+		WHERE
+			token_hash = $1
+			AND expires_at > NOW()
+	`, tokenHash).Scan(&session.ID, &session.UserID, &session.TokenHash, &session.ExpiresAt,
+		&session.IPAddress, &session.UserAgent, &session.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("fetching session by token hash: %w", err)
+	}
+	return session, nil
 }
 
 // DeleteSession removes a single session by its hashed token.
 func (s *PostgresStore) DeleteSession(ctx context.Context, tokenHash []byte) error {
-	// DELETE FROM sessions WHERE token_hash = $1
+	// Delete session w/ matching token hash
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM sessions
+		WHERE token_hash = $1
+	`, tokenHash)
+	if err != nil {
+		return fmt.Errorf("deleting session by token hash: %w", err)
+	}
 	return nil
 }
 
 // DeleteAllUserSessions removes all sessions for a given user.
 // Used for "log out everywhere" or after a password change.
 func (s *PostgresStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error {
-	// DELETE FROM sessions WHERE user_id = $1
+	// Delete session w/ matching user ids
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM sessions
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("deleting session by user id: %w", err)
+	}
 	return nil
 }
