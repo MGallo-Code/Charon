@@ -7,41 +7,10 @@ package store
 
 import (
 	"context"
-	"time"
 
 	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// User represents a row in the users table.
-// Nullable columns are pointers — nil means SQL NULL.
-type User struct {
-	ID               uuid.UUID
-	Email            *string
-	Phone            *string
-	EmailConfirmedAt *time.Time
-	PhoneConfirmedAt *time.Time
-	FirstName        *string
-	LastName         *string
-	PasswordHash     string
-	OAuthProvider    *string
-	OAuthProviderID  *string
-	AvatarURL        *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-}
-
-// Session represents a row in the sessions table.
-// Nullable columns are pointers — nil means SQL NULL.
-type Session struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	TokenHash []byte
-	ExpiresAt time.Time
-	IPAddress *string
-	UserAgent *string
-	CreatedAt time.Time
-}
 
 // PostgresStore wraps a pgxpool connection pool for database ops
 type PostgresStore struct {
