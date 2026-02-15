@@ -81,6 +81,13 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 		/* Val */
 		tokenHash)
 
+	// If TTL is larger than current group TTL, extend the TTL, otherwise do nothing
+	pipe.ExpireGT(ctx,
+		/* Key */
+		fmt.Sprintf("user_sessions:%s", sessionData.UserID),
+		/* TTL */
+		time.Duration(ttl)*time.Second)
+
 	// Exec pipeline cmds, return any err
 	_, err = pipe.Exec(ctx)
 	if err != nil {
