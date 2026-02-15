@@ -41,3 +41,18 @@ func SetSessionCookie(w http.ResponseWriter, rawToken [32]byte, expiresAt time.T
 		MaxAge:   int(time.Until(expiresAt).Seconds()),
 	})
 }
+
+// ClearSessionCookie overwrites the __Host-session cookie with an empty value
+// and MaxAge=-1, telling the browser to delete it immediately. Used for logout.
+func ClearSessionCookie(w http.ResponseWriter) {
+	// Essentially just nulling out cookie by setting new expired vals
+	http.SetCookie(w, &http.Cookie{
+		Name:     "__Host-session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
