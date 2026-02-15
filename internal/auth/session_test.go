@@ -103,3 +103,41 @@ func TestSetSessionCookie(t *testing.T) {
 		}
 	})
 }
+
+// --- ClearSessionCookie ---
+
+func TestClearSessionCookie(t *testing.T) {
+	t.Run("sets expired cookie with matching fields", func(t *testing.T) {
+		w := httptest.NewRecorder()
+
+		ClearSessionCookie(w)
+
+		cookies := w.Result().Cookies()
+		if len(cookies) != 1 {
+			t.Fatalf("expected 1 cookie, got %d", len(cookies))
+		}
+		c := cookies[0]
+
+		if c.Name != "__Host-session" {
+			t.Errorf("name: expected __Host-session, got %q", c.Name)
+		}
+		if c.Value != "" {
+			t.Errorf("value: expected empty, got %q", c.Value)
+		}
+		if c.Path != "/" {
+			t.Errorf("path: expected /, got %q", c.Path)
+		}
+		if !c.HttpOnly {
+			t.Error("HttpOnly should be true")
+		}
+		if !c.Secure {
+			t.Error("Secure should be true")
+		}
+		if c.SameSite != http.SameSiteLaxMode {
+			t.Errorf("SameSite: expected Lax, got %v", c.SameSite)
+		}
+		if c.MaxAge != -1 {
+			t.Errorf("MaxAge: expected -1, got %d", c.MaxAge)
+		}
+	})
+}
