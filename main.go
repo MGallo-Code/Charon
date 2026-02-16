@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MGallo-Code/charon/internal/auth"
 	"github.com/MGallo-Code/charon/internal/config"
 	"github.com/MGallo-Code/charon/internal/store"
 
@@ -80,6 +81,12 @@ func run(cfg *config.Config) error {
 	// Close at end of run
 	defer rs.Close()
 
+	// Create AuthHandler
+	h := auth.AuthHandler{
+		PS: ps,
+		RS: rs,
+	}
+
 	// Create new router
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -94,6 +101,7 @@ func run(cfg *config.Config) error {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
+	r.Post("/registerEmail", h.RegisterByEmail)
 
 	// Create server (& format port)
 	addr := ":" + cfg.Port
