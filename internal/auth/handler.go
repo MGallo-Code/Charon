@@ -5,10 +5,20 @@
 // Delegates to session, password, and csrf packages for logic.
 package auth
 
-import "github.com/MGallo-Code/charon/internal/store"
+import (
+	"context"
+
+	"github.com/MGallo-Code/charon/internal/store"
+)
+
+// SessionCache defines session cache operations needed by auth handlers.
+// Satisfied by *store.RedisStore — defined here (at consumer) per Go convention.
+type SessionCache interface {
+	GetSession(ctx context.Context, tokenHash string) (*store.CachedSession, error)
+}
 
 // AuthHandler holds dependencies for all /auth/* HTTP handlers and middleware.
 type AuthHandler struct {
 	PS *store.PostgresStore
-	RS *store.RedisStore
+	RS SessionCache
 }
