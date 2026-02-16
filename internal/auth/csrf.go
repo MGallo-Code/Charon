@@ -12,7 +12,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"net/http"
 )
 
@@ -53,21 +52,21 @@ func (h *AuthHandler) CSRFMiddleware(next http.Handler) http.Handler {
 			reqCSRFToken, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-CSRF-Token"))
 			// Invalid or missing CSRF token
 			if err != nil || len(reqCSRFToken) != 32 {
-				slog.Warn("csrf validation failed", "reason", "invalid_token_format", "method", r.Method, "path", r.URL.Path)
+				logWarn(r, "csrf validation failed", "reason", "invalid_token_format")
 				csrfForbidden(w)
 				return
 			}
 			// Get session cookie
 			sessCookie, err := r.Cookie("__Host-session")
 			if err != nil || sessCookie.Value == "" {
-				slog.Warn("csrf validation failed", "reason", "missing_session_cookie", "method", r.Method, "path", r.URL.Path)
+				logWarn(r, "csrf validation failed", "reason", "missing_session_cookie")
 				csrfForbidden(w)
 				return
 			}
 			// Decode cookie value back to raw bytes, hash it, hex-encode for Redis key
 			rawToken, err := base64.RawURLEncoding.DecodeString(sessCookie.Value)
 			if err != nil {
-				slog.Warn("csrf validation failed", "reason", "invalid_cookie_encoding", "method", r.Method, "path", r.URL.Path)
+				logWarn(r, "csrf validation failed", "reason", "invalid_cookie_encoding")
 				csrfForbidden(w)
 				return
 			}
@@ -76,14 +75,14 @@ func (h *AuthHandler) CSRFMiddleware(next http.Handler) http.Handler {
 			session, err := h.RS.GetSession(r.Context(), hex.EncodeToString(tokenHash[:]))
 			// Couldn't find session with hashed token
 			if err != nil {
-				slog.Warn("csrf validation failed", "reason", "session_not_found", "method", r.Method, "path", r.URL.Path)
+				logWarn(r, "csrf validation failed", "reason", "session_not_found")
 				csrfForbidden(w)
 				return
 			}
 			// Compare tokens in constant time
 			if len(session.CSRFToken) != 32 ||
 				!ValidateCSRFToken([32]byte(reqCSRFToken), [32]byte(session.CSRFToken)) {
-				slog.Warn("csrf validation failed", "reason", "token_mismatch", "method", r.Method, "path", r.URL.Path)
+				logWarn(r, "csrf validation failed", "reason", "token_mismatch")
 				csrfForbidden(w)
 				return
 			}
