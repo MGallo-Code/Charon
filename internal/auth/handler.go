@@ -8,13 +8,14 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/mail"
 
 	"github.com/MGallo-Code/charon/internal/store"
 	"github.com/gofrs/uuid/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // SessionCache defines session cache operations needed by auth handlers.
@@ -31,7 +32,7 @@ type AuthHandler struct {
 
 func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
 	// HELP WITH THIS?
-	slog.Error("internal server error", "error", err, "method", r.Method, "path", r.URL.Path)
+	logError(r, "internal server error", "error", err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusInternalServerError)
 	w.Write([]byte(`{"message":"internal server error"}`))
@@ -53,7 +54,7 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 	// Attempt to read body into input requirements
 	err := json.NewDecoder(r.Body).Decode(&registerInput)
 	if err != nil {
-		slog.Warn("failed to decode register input", "error", err)
+		logWarn(r, "failed to decode register input", "error", err)
 		BadRequest(w, r, "error decoding request body")
 		return
 	} else if registerInput.Email == "" {
@@ -95,10 +96,21 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Attempt to create user w/ postgres store, if doesn't work internal server error
+	// Attempt to create user w/ postgres store
 	err = h.PS.CreateUserByEmail(r.Context(), userID, registerInput.Email, hashedPassword)
 	if err != nil {
-		InternalServerError(w, r, err)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// Duplicate email — log as info, not error (expected behavior)
+			logInfo(r, "registration attempted with existing email")
+		} else {
+			// Real database failure — log as error for alerting
+			logError(r, "failed to create user", "error", err)
+		}
+		// Same response either way — no user enumeration
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"registration failed"}`))
 		return
 	}
 
