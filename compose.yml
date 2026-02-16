@@ -39,6 +39,7 @@ services:
       retries: 5
     networks:
       - private
+      - gateway
 
   db:
     container_name: charon-postgres
@@ -77,6 +78,7 @@ services:
 networks:
   private:
     internal: true
+  gateway:
 
 volumes:
   db:
