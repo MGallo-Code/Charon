@@ -3,7 +3,9 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 )
 
 // Config holds all env configuration vars for Charon.
@@ -13,6 +15,7 @@ type Config struct {
 	Port         string
 	CookieDomain string
 	CookieSecure bool
+	LogLevel     slog.Level
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
@@ -44,6 +47,18 @@ func LoadConfig() (*Config, error) {
 
 	// Attempt to get cookie secure value as bool
 	cfg.CookieSecure = os.Getenv("COOKIE_SECURE") != "false"
+
+	// Parse log level, default to info
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		cfg.LogLevel = slog.LevelDebug
+	case "warn":
+		cfg.LogLevel = slog.LevelWarn
+	case "error":
+		cfg.LogLevel = slog.LevelError
+	default:
+		cfg.LogLevel = slog.LevelInfo
+	}
 
 	return cfg, nil
 }

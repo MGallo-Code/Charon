@@ -25,12 +25,21 @@ import (
 var migrationsDir embed.FS
 
 func main() {
-	// Set up slog to output as json
-	handler := slog.NewJSONHandler(os.Stdout, nil)
-	slog.SetDefault(slog.New(handler))
+	// Load config first so we can set log level
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		// Fallback logger before config is available
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+
+	// Set up slog to output as json with configured level
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: cfg.LogLevel,
+	})))
 
 	// Put main server running in a function so deferred calls actually run when we have to call os.Exit(1), then we can exit here
-	if err := run(); err != nil {
+	if err := run(cfg); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
@@ -38,13 +47,7 @@ func main() {
 
 // run contains all server logic. Returns error instead of os.Exit
 // so defers (ps.Close, rs.Close) always run.
-func run() error {
-	// Load config from env variables
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
+func run(cfg *config.Config) error {
 	// Create a new context
 	ctx := context.Background()
 

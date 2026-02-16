@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"testing"
 )
 
@@ -114,6 +115,70 @@ func TestLoadConfig(t *testing.T) {
 			if !cfg.CookieSecure {
 				t.Errorf("CookieSecure should be true for %q", val)
 			}
+		}
+	})
+
+	t.Run("LogLevel defaults to info when unset", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("LOG_LEVEL", "")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.LogLevel != slog.LevelInfo {
+			t.Errorf("LogLevel: expected %v, got %v", slog.LevelInfo, cfg.LogLevel)
+		}
+	})
+
+	t.Run("LogLevel parses all valid levels", func(t *testing.T) {
+		setRequired(t)
+
+		cases := map[string]slog.Level{
+			"debug": slog.LevelDebug,
+			"info":  slog.LevelInfo,
+			"warn":  slog.LevelWarn,
+			"error": slog.LevelError,
+		}
+		for input, expected := range cases {
+			t.Setenv("LOG_LEVEL", input)
+
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig failed for %q: %v", input, err)
+			}
+			if cfg.LogLevel != expected {
+				t.Errorf("LogLevel for %q: expected %v, got %v", input, expected, cfg.LogLevel)
+			}
+		}
+	})
+
+	t.Run("LogLevel is case-insensitive", func(t *testing.T) {
+		setRequired(t)
+
+		for _, input := range []string{"DEBUG", "Debug", "dEbUg"} {
+			t.Setenv("LOG_LEVEL", input)
+
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig failed for %q: %v", input, err)
+			}
+			if cfg.LogLevel != slog.LevelDebug {
+				t.Errorf("LogLevel for %q: expected %v, got %v", input, slog.LevelDebug, cfg.LogLevel)
+			}
+		}
+	})
+
+	t.Run("LogLevel defaults to info for unrecognized value", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("LOG_LEVEL", "verbose")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.LogLevel != slog.LevelInfo {
+			t.Errorf("LogLevel: expected %v, got %v", slog.LevelInfo, cfg.LogLevel)
 		}
 	})
 }
