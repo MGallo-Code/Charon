@@ -52,6 +52,47 @@ func TestSetAndGetSession(t *testing.T) {
 	})
 }
 
+// --- SetSession TTL ---
+
+func TestSetSessionTTL(t *testing.T) {
+	ctx := context.Background()
+
+	// Generally trusting redis to auto-remove expired , but just in case...
+	t.Run("session expires after TTL", func(t *testing.T) {
+		tokenHash := "testhash_ttl"
+		userID, _ := uuid.NewV7()
+		session := Session{
+			UserID:    userID,
+			CSRFToken: []byte("csrf-ttl-padding-to-32-bytes!!!"),
+			ExpiresAt: time.Now().Add(2 * time.Second).Truncate(time.Second),
+		}
+		t.Cleanup(func() {
+			testRedis.DeleteSession(ctx, tokenHash, userID)
+		})
+
+		// Store with 2-second TTL
+		err := testRedis.SetSession(ctx, tokenHash, session, 2)
+		if err != nil {
+			t.Fatalf("SetSession failed: %v", err)
+		}
+
+		// Immediately retrievable
+		_, err = testRedis.GetSession(ctx, tokenHash)
+		if err != nil {
+			t.Fatalf("session should exist immediately: %v", err)
+		}
+
+		// Wait for TTL to expire
+		time.Sleep(3 * time.Second)
+
+		// Should be gone now
+		_, err = testRedis.GetSession(ctx, tokenHash)
+		if err == nil {
+			t.Error("session should be expired after TTL")
+		}
+	})
+}
+
 // --- GetSession (miss) ---
 
 func TestGetSessionMiss(t *testing.T) {
