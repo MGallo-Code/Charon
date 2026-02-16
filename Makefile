@@ -1,7 +1,7 @@
 .PHONY: run build test vet tidy
 
 run:
-	go run main.go
+	docker compose up --build
 
 build:
 	go build -o charon main.go
