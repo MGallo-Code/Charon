@@ -74,13 +74,13 @@ func cleanupUsersByEmail(t *testing.T, ctx context.Context, emails ...string) {
 }
 
 // Creates a session in db for given user, returns session ID
-func mustCreateSession(t *testing.T, ctx context.Context, userID uuid.UUID, tokenHash []byte, expiresAt time.Time) uuid.UUID {
+func mustCreateSession(t *testing.T, ctx context.Context, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time) uuid.UUID {
 	t.Helper()
 	id, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("failed to generate session UUID: %v", err)
 	}
-	if err := testStore.CreateSession(ctx, id, userID, tokenHash, expiresAt, nil, nil); err != nil {
+	if err := testStore.CreateSession(ctx, id, userID, tokenHash, csrfToken, expiresAt, nil, nil); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	return id

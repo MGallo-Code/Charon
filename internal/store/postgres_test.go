@@ -211,12 +211,13 @@ func TestCreateSession(t *testing.T) {
 		// Need a real user (foreign key constraint)
 		userID := mustCreateUser(t, ctx, email, "fakehash")
 		tokenHash := sha256.Sum256([]byte("test-token-create"))
+		csrfToken := sha256.Sum256([]byte("test-csrf-create"))
 		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
 		ip := "192.168.1.1"
 		ua := "Mozilla/5.0"
 
 		sessionID, _ := uuid.NewV7()
-		err := testStore.CreateSession(ctx, sessionID, userID, tokenHash[:], expiresAt, &ip, &ua)
+		err := testStore.CreateSession(ctx, sessionID, userID, tokenHash[:], csrfToken[:], expiresAt, &ip, &ua)
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -226,17 +227,18 @@ func TestCreateSession(t *testing.T) {
 			dbID        uuid.UUID
 			dbUserID    uuid.UUID
 			dbTokenHash []byte
+			dbCSRFToken []byte
 			dbExpiresAt time.Time
 			dbIP        *string
 			dbUA        *string
 			dbCreatedAt time.Time
 		)
 		err = testStore.pool.QueryRow(ctx, `
-			SELECT 
-				id, user_id, token_hash, expires_at, ip_address::TEXT, user_agent, created_at
+			SELECT
+				id, user_id, token_hash, csrf_token, expires_at, ip_address::TEXT, user_agent, created_at
 			FROM sessions
 			WHERE id = $1
-		`, sessionID).Scan(&dbID, &dbUserID, &dbTokenHash, &dbExpiresAt, &dbIP, &dbUA, &dbCreatedAt)
+		`, sessionID).Scan(&dbID, &dbUserID, &dbTokenHash, &dbCSRFToken, &dbExpiresAt, &dbIP, &dbUA, &dbCreatedAt)
 		if err != nil {
 			t.Fatalf("querying session: %v", err)
 		}
@@ -249,6 +251,9 @@ func TestCreateSession(t *testing.T) {
 		}
 		if string(dbTokenHash) != string(tokenHash[:]) {
 			t.Error("token_hash does not match")
+		}
+		if string(dbCSRFToken) != string(csrfToken[:]) {
+			t.Error("csrf_token does not match")
 		}
 		if !dbExpiresAt.Equal(expiresAt) {
 			t.Errorf("expires_at: expected %v, got %v", expiresAt, dbExpiresAt)
@@ -270,10 +275,11 @@ func TestCreateSession(t *testing.T) {
 
 		userID := mustCreateUser(t, ctx, email, "fakehash")
 		tokenHash := sha256.Sum256([]byte("test-token-nil"))
+		csrfToken := sha256.Sum256([]byte("test-csrf-nil"))
 		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
 
 		sessionID, _ := uuid.NewV7()
-		err := testStore.CreateSession(ctx, sessionID, userID, tokenHash[:], expiresAt, nil, nil)
+		err := testStore.CreateSession(ctx, sessionID, userID, tokenHash[:], csrfToken[:], expiresAt, nil, nil)
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -304,11 +310,13 @@ func TestCreateSession(t *testing.T) {
 		tokenHash := sha256.Sum256([]byte("test-token-dup"))
 		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
 
-		mustCreateSession(t, ctx, userID, tokenHash[:], expiresAt)
+		csrfToken := sha256.Sum256([]byte("test-csrf-dup"))
+		mustCreateSession(t, ctx, userID, tokenHash[:], csrfToken[:], expiresAt)
 
 		// Attempt to create another session with same token hash
 		id2, _ := uuid.NewV7()
-		err := testStore.CreateSession(ctx, id2, userID, tokenHash[:], expiresAt, nil, nil)
+		csrfToken2 := sha256.Sum256([]byte("test-csrf-dup-2"))
+		err := testStore.CreateSession(ctx, id2, userID, tokenHash[:], csrfToken2[:], expiresAt, nil, nil)
 		if err == nil {
 			t.Fatal("expected error for duplicate token_hash, got nil")
 		}
@@ -326,8 +334,9 @@ func TestGetSessionByTokenHash(t *testing.T) {
 
 		userID := mustCreateUser(t, ctx, email, "fakehash")
 		tokenHash := sha256.Sum256([]byte("test-token-get"))
+		csrfToken := sha256.Sum256([]byte("test-csrf-get"))
 		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
-		sessionID := mustCreateSession(t, ctx, userID, tokenHash[:], expiresAt)
+		sessionID := mustCreateSession(t, ctx, userID, tokenHash[:], csrfToken[:], expiresAt)
 
 		session, err := testStore.GetSessionByTokenHash(ctx, tokenHash[:])
 		if err != nil {
@@ -340,6 +349,9 @@ func TestGetSessionByTokenHash(t *testing.T) {
 		if session.UserID != userID {
 			t.Errorf("user_id: expected %v, got %v", userID, session.UserID)
 		}
+		if string(session.CSRFToken) != string(csrfToken[:]) {
+			t.Error("csrf_token does not match")
+		}
 		if !session.ExpiresAt.Equal(expiresAt) {
 			t.Errorf("expires_at: expected %v, got %v", expiresAt, session.ExpiresAt)
 		}
@@ -351,9 +363,10 @@ func TestGetSessionByTokenHash(t *testing.T) {
 
 		userID := mustCreateUser(t, ctx, email, "fakehash")
 		tokenHash := sha256.Sum256([]byte("test-token-expired"))
+		csrfToken := sha256.Sum256([]byte("test-csrf-expired"))
 		// Expired 1 hour ago
 		expiresAt := time.Now().Add(-1 * time.Hour).Truncate(time.Microsecond)
-		mustCreateSession(t, ctx, userID, tokenHash[:], expiresAt)
+		mustCreateSession(t, ctx, userID, tokenHash[:], csrfToken[:], expiresAt)
 
 		_, err := testStore.GetSessionByTokenHash(ctx, tokenHash[:])
 		if err == nil {
@@ -381,8 +394,9 @@ func TestDeleteSessionPG(t *testing.T) {
 
 		userID := mustCreateUser(t, ctx, email, "fakehash")
 		tokenHash := sha256.Sum256([]byte("test-token-delete"))
+		csrfToken := sha256.Sum256([]byte("test-csrf-delete"))
 		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
-		mustCreateSession(t, ctx, userID, tokenHash[:], expiresAt)
+		mustCreateSession(t, ctx, userID, tokenHash[:], csrfToken[:], expiresAt)
 
 		err := testStore.DeleteSession(ctx, tokenHash[:])
 		if err != nil {
@@ -413,11 +427,14 @@ func TestDeleteAllUserSessionsPG(t *testing.T) {
 		hashA1 := sha256.Sum256([]byte("token-a1"))
 		hashA2 := sha256.Sum256([]byte("token-a2"))
 		hashB1 := sha256.Sum256([]byte("token-b1"))
+		csrfA1 := sha256.Sum256([]byte("csrf-a1"))
+		csrfA2 := sha256.Sum256([]byte("csrf-a2"))
+		csrfB1 := sha256.Sum256([]byte("csrf-b1"))
 		expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
 
-		mustCreateSession(t, ctx, userA, hashA1[:], expiresAt)
-		mustCreateSession(t, ctx, userA, hashA2[:], expiresAt)
-		mustCreateSession(t, ctx, userB, hashB1[:], expiresAt)
+		mustCreateSession(t, ctx, userA, hashA1[:], csrfA1[:], expiresAt)
+		mustCreateSession(t, ctx, userA, hashA2[:], csrfA2[:], expiresAt)
+		mustCreateSession(t, ctx, userB, hashB1[:], csrfB1[:], expiresAt)
 
 		// Delete all of userA's sessions
 		err := testStore.DeleteAllUserSessions(ctx, userA)

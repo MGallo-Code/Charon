@@ -32,6 +32,7 @@ type Session struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
 	TokenHash []byte
+	CSRFToken []byte
 	ExpiresAt time.Time
 	IPAddress *string
 	UserAgent *string
@@ -42,5 +43,6 @@ type Session struct {
 // Only the fields needed for fast session validation — full metadata lives in Postgres.
 type CachedSession struct {
 	UserID    uuid.UUID `json:"user_id"`
+	CSRFToken []byte    `json:"csrf_token"`
 	ExpiresAt time.Time `json:"expires_at"`
 }

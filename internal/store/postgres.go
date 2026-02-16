@@ -120,14 +120,14 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 // CreateSession inserts a new session row in the sessions table.
 // Caller generates the UUID v7, hashes the token (SHA-256), and sets expiresAt.
 // ip and userAgent are optional (nullable) — pass nil to omit.
-func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, expiresAt time.Time, ip *string, userAgent *string) error {
+func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error {
 	// Insert session into pg table
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO sessions 
-			(id, user_id, token_hash, expires_at, ip_address, user_agent)
+		INSERT INTO sessions
+			(id, user_id, token_hash, csrf_token, expires_at, ip_address, user_agent)
 		VALUES
-			($1, $2, $3, $4, $5, $6)
-	`, id, userID, tokenHash, expiresAt, ip, userAgent)
+			($1, $2, $3, $4, $5, $6, $7)
+	`, id, userID, tokenHash, csrfToken, expiresAt, ip, userAgent)
 	// if err, report!
 	if err != nil {
 		return fmt.Errorf("inserting session: %w", err)
@@ -144,12 +144,12 @@ func (s *PostgresStore) GetSessionByTokenHash(ctx context.Context, tokenHash []b
 	// Fetch matching NON-EXPIRED sessions
 	err := s.pool.QueryRow(ctx, `
 		SELECT
-			id, user_id, token_hash, expires_at, ip_address, user_agent, created_at
+			id, user_id, token_hash, csrf_token, expires_at, ip_address, user_agent, created_at
 		FROM sessions
 		WHERE
 			token_hash = $1
 			AND expires_at > NOW()
-	`, tokenHash).Scan(&session.ID, &session.UserID, &session.TokenHash, &session.ExpiresAt,
+	`, tokenHash).Scan(&session.ID, &session.UserID, &session.TokenHash, &session.CSRFToken, &session.ExpiresAt,
 		&session.IPAddress, &session.UserAgent, &session.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("fetching session by token hash: %w", err)

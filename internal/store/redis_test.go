@@ -17,8 +17,10 @@ func TestSetAndGetSession(t *testing.T) {
 		// Set example vars
 		tokenHash := "testhash_set_get"
 		userID, _ := uuid.NewV7()
+		csrfToken := []byte("test-csrf-redis-roundtrip-32byte")
 		session := Session{
 			UserID:    userID,
+			CSRFToken: csrfToken,
 			ExpiresAt: time.Now().Add(1 * time.Hour).Truncate(time.Second),
 		}
 		t.Cleanup(func() {
@@ -40,6 +42,9 @@ func TestSetAndGetSession(t *testing.T) {
 		// Verify fields match
 		if got.UserID != userID {
 			t.Errorf("UserID: expected %v, got %v", userID, got.UserID)
+		}
+		if string(got.CSRFToken) != string(csrfToken) {
+			t.Error("CSRFToken does not match")
 		}
 		if !got.ExpiresAt.Equal(session.ExpiresAt) {
 			t.Errorf("ExpiresAt: expected %v, got %v", session.ExpiresAt, got.ExpiresAt)
@@ -73,6 +78,7 @@ func TestDeleteSession(t *testing.T) {
 		userID, _ := uuid.NewV7()
 		session := Session{
 			UserID:    userID,
+			CSRFToken: []byte("test-csrf-redis-delete-32bytes!"),
 			ExpiresAt: time.Now().Add(1 * time.Hour).Truncate(time.Second),
 		}
 
@@ -112,9 +118,9 @@ func TestDeleteAllUserSessions(t *testing.T) {
 		})
 
 		// Create two sessions for userID, one for otherUserID
-		testRedis.SetSession(ctx, hash1, Session{UserID: userID, ExpiresAt: time.Now().Add(1 * time.Hour)}, 3600)
-		testRedis.SetSession(ctx, hash2, Session{UserID: userID, ExpiresAt: time.Now().Add(1 * time.Hour)}, 3600)
-		testRedis.SetSession(ctx, hashOther, Session{UserID: otherUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, 3600)
+		testRedis.SetSession(ctx, hash1, Session{UserID: userID, CSRFToken: []byte("csrf-a1-padding-to-32-bytes!!!!"), ExpiresAt: time.Now().Add(1 * time.Hour)}, 3600)
+		testRedis.SetSession(ctx, hash2, Session{UserID: userID, CSRFToken: []byte("csrf-a2-padding-to-32-bytes!!!!"), ExpiresAt: time.Now().Add(1 * time.Hour)}, 3600)
+		testRedis.SetSession(ctx, hashOther, Session{UserID: otherUserID, CSRFToken: []byte("csrf-b1-padding-to-32-bytes!!!!"), ExpiresAt: time.Now().Add(1 * time.Hour)}, 3600)
 
 		// Delete all sessions for userID
 		err := testRedis.DeleteAllUserSessions(ctx, userID)

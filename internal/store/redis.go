@@ -57,6 +57,7 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 	// Put session data into json string format for redis-structured session obj
 	cacheOut, err := json.Marshal(CachedSession{
 		UserID:    sessionData.UserID,
+		CSRFToken: sessionData.CSRFToken,
 		ExpiresAt: sessionData.ExpiresAt,
 	})
 	if err != nil {

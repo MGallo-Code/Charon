@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL,
     token_hash BYTEA UNIQUE NOT NULL,
+    csrf_token BYTEA NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     ip_address INET,
     user_agent TEXT,
