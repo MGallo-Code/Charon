@@ -24,9 +24,13 @@ type SessionCache interface {
 	GetSession(ctx context.Context, tokenHash string) (*store.CachedSession, error)
 }
 
+type Store interface {
+	CreateUserByEmail(ctx context.Context, uuid uuid.UUID, email, passwordHash string) error
+}
+
 // AuthHandler holds dependencies for all /auth/* HTTP handlers and middleware.
 type AuthHandler struct {
-	PS *store.PostgresStore
+	PS Store
 	RS SessionCache
 }
 
@@ -107,10 +111,7 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 			// Real database failure — log as error for alerting
 			logError(r, "failed to create user", "error", err)
 		}
-		// Same response either way — no user enumeration
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"registration failed"}`))
+		InternalServerError(w, r, err)
 		return
 	}
 
