@@ -22,13 +22,20 @@ type mockSessionCache struct {
 	sessions map[string]*store.CachedSession
 }
 
-// Mock function to "GetSession" using tokenHash, gets session stored in mockSessionCache
+// GetSession retrieves a cached session by token hash from the mock store.
 func (m *mockSessionCache) GetSession(_ context.Context, tokenHash string) (*store.CachedSession, error) {
 	s, ok := m.sessions[tokenHash]
 	if !ok {
 		return nil, fmt.Errorf("session not found")
 	}
 	return s, nil
+}
+
+// SetSession stores a session in the mock cache (stub for interface compliance).
+func (m *mockSessionCache) SetSession(_ context.Context, tokenHash string, sessionData store.Session, ttl int) error {
+	// For testing, we don't need to actually store anything here
+	// Real tests that need this will override or use a more sophisticated mock
+	return nil
 }
 
 // passHandler returns 200 when reached — proves middleware let request through.

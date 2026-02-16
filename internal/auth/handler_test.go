@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/MGallo-Code/charon/internal/store"
 	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -18,11 +20,25 @@ import (
 
 // mockStore implements Store interface for handler unit tests.
 type mockStore struct {
-	createUserErr error
+	createUserErr   error
+	getUserByEmail  *store.User
+	getUserErr      error
+	createSessionErr error
 }
 
 func (m *mockStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, email, passwordHash string) error {
 	return m.createUserErr
+}
+
+func (m *mockStore) GetUserByEmail(ctx context.Context, email string) (*store.User, error) {
+	if m.getUserErr != nil {
+		return nil, m.getUserErr
+	}
+	return m.getUserByEmail, nil
+}
+
+func (m *mockStore) CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error {
+	return m.createSessionErr
 }
 
 // --- Helper Functions ---
