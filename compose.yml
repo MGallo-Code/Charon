@@ -45,6 +45,7 @@ services:
     container_name: charon-postgres
     image: postgres:18.1-alpine3.23
     restart: unless-stopped
+    command: postgres -c log_min_error_statement=PANIC -c log_min_messages=PANIC # Hide PG logs
     environment:
       TZ: "UTC"
       POSTGRES_USER: ${POSTGRES_USER}
