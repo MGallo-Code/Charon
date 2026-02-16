@@ -33,9 +33,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Show file, line, and function in every log entry at debug level, otherwise don't
+	addSrc := cfg.LogLevel == slog.LevelDebug
+
 	// Set up slog to output as json with configured level
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: cfg.LogLevel,
+		Level:     cfg.LogLevel,
+		AddSource: addSrc,
 	})))
 
 	// Put main server running in a function so deferred calls actually run when we have to call os.Exit(1), then we can exit here
