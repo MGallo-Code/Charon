@@ -61,33 +61,6 @@ type AuthHandler struct {
 	RS SessionCache
 }
 
-// InternalServerError logs the error and returns a generic 500 JSON response.
-// Never exposes internal error details to prevent information leakage.
-func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
-	logError(r, "internal server error", "error", err)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusInternalServerError)
-	w.Write([]byte(`{"message":"internal server error"}`))
-}
-
-// BadRequest returns a 400 JSON response with the given message.
-// Use for client input validation failures.
-func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-	resp, _ := json.Marshal(map[string]string{"message": message})
-	w.Write(resp)
-}
-
-// Unauthorized returns a 401 JSON response with a generic message.
-// Use for authentication failures. Keep message generic to prevent user enumeration.
-func Unauthorized(w http.ResponseWriter, r *http.Request, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	resp, _ := json.Marshal(map[string]string{"message": message})
-	w.Write(resp)
-}
-
 // RegisterByEmail handles POST /auth/register for email + password signup.
 // Validates input, hashes password with Argon2id, and creates user in database.
 // Returns 201 with user_id on success, 400 for validation errors, 500 for server errors.
