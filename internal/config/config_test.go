@@ -76,48 +76,6 @@ func TestLoadConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("CookieSecure defaults to true when unset", func(t *testing.T) {
-		setRequired(t)
-		t.Setenv("COOKIE_SECURE", "")
-
-		cfg, err := LoadConfig()
-		if err != nil {
-			t.Fatalf("LoadConfig failed: %v", err)
-		}
-		if !cfg.CookieSecure {
-			t.Error("CookieSecure should default to true when COOKIE_SECURE is unset")
-		}
-	})
-
-	t.Run("CookieSecure is false only when explicitly set to false", func(t *testing.T) {
-		setRequired(t)
-		t.Setenv("COOKIE_SECURE", "false")
-
-		cfg, err := LoadConfig()
-		if err != nil {
-			t.Fatalf("LoadConfig failed: %v", err)
-		}
-		if cfg.CookieSecure {
-			t.Error("CookieSecure should be false when COOKIE_SECURE is \"false\"")
-		}
-	})
-
-	t.Run("CookieSecure stays true for any non-false value", func(t *testing.T) {
-		setRequired(t)
-		// "true", "1", "yes", typos — all should result in secure cookies
-		for _, val := range []string{"true", "1", "yes", "FALSE", "typo"} {
-			t.Setenv("COOKIE_SECURE", val)
-
-			cfg, err := LoadConfig()
-			if err != nil {
-				t.Fatalf("LoadConfig failed for %q: %v", val, err)
-			}
-			if !cfg.CookieSecure {
-				t.Errorf("CookieSecure should be true for %q", val)
-			}
-		}
-	})
-
 	t.Run("LogLevel defaults to info when unset", func(t *testing.T) {
 		setRequired(t)
 		t.Setenv("LOG_LEVEL", "")

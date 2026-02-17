@@ -14,7 +14,6 @@ type Config struct {
 	RedisURL     string
 	Port         string
 	CookieDomain string
-	CookieSecure bool
 	LogLevel     slog.Level
 }
 
@@ -44,9 +43,6 @@ func LoadConfig() (*Config, error) {
 
 	// Attempt to get cookie domain
 	cfg.CookieDomain = os.Getenv("COOKIE_DOMAIN")
-
-	// Attempt to get cookie secure value as bool
-	cfg.CookieSecure = os.Getenv("COOKIE_SECURE") != "false"
 
 	// Parse log level, default to info
 	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
