@@ -183,3 +183,18 @@ func (s *PostgresStore) DeleteAllUserSessions(ctx context.Context, userID uuid.U
 	}
 	return nil
 }
+
+// CleanupExpiredSessions deletes sessions expired before the retention cutoff.
+// Call with a retention period (e.g. 7 * 24 * time.Hour) to keep a grace window
+// for audit logs before permanent deletion. Returns the number of rows deleted.
+func (s *PostgresStore) CleanupExpiredSessions(ctx context.Context, retention time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-retention)
+	result, err := s.pool.Exec(ctx, `
+		DELETE FROM sessions
+		WHERE expires_at < $1
+	`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("cleaning up expired sessions: %w", err)
+	}
+	return result.RowsAffected(), nil
+}
