@@ -108,6 +108,29 @@ func run(cfg *config.Config) error {
 	addr := ":" + cfg.Port
 	server := &http.Server{Addr: addr, Handler: r}
 
+	// Start session cleanup goroutine — deletes sessions expired >7 days ago, runs every 24h.
+	// cleanupCtx is cancelled when run() returns, stopping the goroutine cleanly on shutdown.
+	cleanupCtx, cancelCleanup := context.WithCancel(ctx)
+	defer cancelCleanup()
+	go func() {
+		const retention = 7 * 24 * time.Hour
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				n, err := ps.CleanupExpiredSessions(cleanupCtx, retention)
+				if err != nil {
+					slog.Warn("session cleanup failed", "error", err)
+				} else {
+					slog.Info("session cleanup complete", "deleted", n)
+				}
+			case <-cleanupCtx.Done():
+				return
+			}
+		}
+	}()
+
 	// Start server in a goroutine, run() func continues past this
 	errCh := make(chan error, 1)
 	go func() {
