@@ -3,7 +3,6 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,12 +64,12 @@ func newCSRFTestSetup() csrfTestSetup {
 	}
 
 	tokenHash := sha256.Sum256(sessionToken[:])
-	tokenHashHex := hex.EncodeToString(tokenHash[:])
+	tokenHashEncoded := base64.RawURLEncoding.EncodeToString(tokenHash[:])
 
 	// Mock session cache
 	mock := &mockSessionCache{
 		sessions: map[string]*store.CachedSession{
-			tokenHashHex: {
+			tokenHashEncoded: {
 				UserID:    uuid.Must(uuid.NewV4()),
 				CSRFToken: csrfToken[:],
 				ExpiresAt: time.Now().Add(24 * time.Hour),
@@ -328,7 +327,7 @@ func TestCSRFMiddleware(t *testing.T) {
 		tokenHash := sha256.Sum256(setup.sessionToken[:])
 		mock := &mockSessionCache{
 			sessions: map[string]*store.CachedSession{
-				hex.EncodeToString(tokenHash[:]): {
+				base64.RawURLEncoding.EncodeToString(tokenHash[:]): {
 					UserID:    uuid.Must(uuid.NewV4()),
 					CSRFToken: make([]byte, 16), // wrong length
 					ExpiresAt: time.Now().Add(24 * time.Hour),

@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 )
@@ -72,7 +71,7 @@ func (h *AuthHandler) CSRFMiddleware(next http.Handler) http.Handler {
 			}
 			// Hash token to match Redis session storage
 			tokenHash := sha256.Sum256(rawToken)
-			session, err := h.RS.GetSession(r.Context(), hex.EncodeToString(tokenHash[:]))
+			session, err := h.RS.GetSession(r.Context(), base64.RawURLEncoding.EncodeToString(tokenHash[:]))
 			// Couldn't find session with hashed token
 			if err != nil {
 				logWarn(r, "csrf validation failed", "reason", "session_not_found")
