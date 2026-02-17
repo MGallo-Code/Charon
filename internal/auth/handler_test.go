@@ -21,10 +21,12 @@ import (
 
 // mockStore implements Store interface for handler unit tests.
 type mockStore struct {
-	createUserErr    error
-	getUserByEmail   *store.User
-	getUserErr       error
-	createSessionErr error
+	createUserErr         error
+	getUserByEmail        *store.User
+	getUserErr            error
+	createSessionErr      error
+	getSessionByTokenHash *store.Session
+	getSessionErr         error
 }
 
 func (m *mockStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, email, passwordHash string) error {
@@ -40,6 +42,13 @@ func (m *mockStore) GetUserByEmail(ctx context.Context, email string) (*store.Us
 
 func (m *mockStore) CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error {
 	return m.createSessionErr
+}
+
+func (m *mockStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*store.Session, error) {
+	if m.getSessionErr != nil {
+		return nil, m.getSessionErr
+	}
+	return m.getSessionByTokenHash, nil
 }
 
 // --- Helper Functions ---

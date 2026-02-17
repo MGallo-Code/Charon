@@ -30,10 +30,17 @@ func (m *mockSessionCache) GetSession(_ context.Context, tokenHash string) (*sto
 	return s, nil
 }
 
-// SetSession stores a session in the mock cache (stub for interface compliance).
+// SetSession stores a session in the mock cache.
+// Stateful so round-trip tests (login → middleware) share the same session store.
 func (m *mockSessionCache) SetSession(_ context.Context, tokenHash string, sessionData store.Session, ttl int) error {
-	// For testing, we don't need to actually store anything here
-	// Real tests that need this will override or use a more sophisticated mock
+	if m.sessions == nil {
+		m.sessions = make(map[string]*store.CachedSession)
+	}
+	m.sessions[tokenHash] = &store.CachedSession{
+		UserID:    sessionData.UserID,
+		CSRFToken: sessionData.CSRFToken,
+		ExpiresAt: sessionData.ExpiresAt,
+	}
 	return nil
 }
 

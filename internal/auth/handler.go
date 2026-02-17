@@ -43,6 +43,10 @@ type Store interface {
 
 	// CreateSession inserts a new session row with token hash and CSRF token.
 	CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error
+
+	// GetSessionByTokenHash fetches a valid (non-expired) session by its token hash.
+	// Returns pgx.ErrNoRows if not found or expired.
+	GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*store.Session, error)
 }
 
 // dummyPasswordHash is a precomputed Argon2id hash used for timing attack mitigation.
