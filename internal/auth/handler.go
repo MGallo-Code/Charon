@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/mail"
 	"time"
@@ -261,12 +262,17 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract IP address and user agent for audit logging
-	ip := r.RemoteAddr
+	// RemoteAddr includes port (e.g., "192.168.65.1:46294"), but INET column expects just IP
+	ipAddr, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		// If no port, use RemoteAddr as-is (shouldn't happen but be defensive)
+		ipAddr = r.RemoteAddr
+	}
 	userAgent := r.UserAgent()
 
 	// Store session in PostgreSQL (durable, source of truth)
 	// Convert array pointers to slices for storage
-	err = h.PS.CreateSession(r.Context(), sessionID, user.ID, tokenHash[:], csrfToken[:], expiresAt, &ip, &userAgent)
+	err = h.PS.CreateSession(r.Context(), sessionID, user.ID, tokenHash[:], csrfToken[:], expiresAt, &ipAddr, &userAgent)
 	if err != nil {
 		logError(r, "failed to create session in database", "error", err)
 		InternalServerError(w, r, err)
