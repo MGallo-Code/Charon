@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/mail"
@@ -76,7 +75,8 @@ func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	w.Write([]byte(fmt.Sprintf(`{"message":"%s"}`, message)))
+	resp, _ := json.Marshal(map[string]string{"message": message})
+	w.Write(resp)
 }
 
 // Unauthorized returns a 401 JSON response with a generic message.
@@ -84,7 +84,8 @@ func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 func Unauthorized(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	w.Write([]byte(fmt.Sprintf(`{"message":"%s"}`, message)))
+	resp, _ := json.Marshal(map[string]string{"message": message})
+	w.Write(resp)
 }
 
 // RegisterByEmail handles POST /auth/register for email + password signup.
@@ -176,7 +177,8 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 	// Success! Return 201 with new user ID
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(fmt.Sprintf(`{"user_id":"%s"}`, userID)))
+	resp, _ := json.Marshal(map[string]string{"user_id": userID.String()})
+	w.Write(resp)
 }
 
 // LoginByEmail handles POST /auth/login for email + password authentication.
@@ -316,5 +318,9 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	csrfTokenEncoded := base64.RawURLEncoding.EncodeToString(csrfToken[:])
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf(`{"user_id":"%s","csrf_token":"%s"}`, user.ID, csrfTokenEncoded)))
+	resp, _ := json.Marshal(map[string]string{
+		"user_id":    user.ID.String(),
+		"csrf_token": csrfTokenEncoded,
+	})
+	w.Write(resp)
 }
