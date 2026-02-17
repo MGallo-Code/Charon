@@ -102,6 +102,7 @@ func run(cfg *config.Config) error {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 	r.Post("/registerEmail", h.RegisterByEmail)
+	r.Post("/loginEmail", h.LoginByEmail)
 
 	// Create server (& format port)
 	addr := ":" + cfg.Port
