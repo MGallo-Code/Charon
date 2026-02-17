@@ -411,6 +411,68 @@ func TestDeleteSessionPG(t *testing.T) {
 	})
 }
 
+// --- CleanupExpiredSessions ---
+
+func TestCleanupExpiredSessions(t *testing.T) {
+	ctx := context.Background()
+
+	// sessionExists queries the DB directly, ignoring expires_at, to confirm a row is present.
+	sessionExists := func(t *testing.T, tokenHash []byte) bool {
+		t.Helper()
+		var count int
+		err := testStore.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM sessions WHERE token_hash = $1`, tokenHash,
+		).Scan(&count)
+		if err != nil {
+			t.Fatalf("sessionExists query failed: %v", err)
+		}
+		return count > 0
+	}
+
+	t.Run("deletes only sessions beyond retention window", func(t *testing.T) {
+		email := "cleanup_test@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+
+		// Three sessions with different expiry times
+		hashAncient := sha256.Sum256([]byte("token-ancient")) // expired 10 days ago → should be deleted
+		hashRecent := sha256.Sum256([]byte("token-recent"))   // expired 3 days ago  → inside 7d window, keep
+		hashActive := sha256.Sum256([]byte("token-active"))   // expires tomorrow     → active, keep
+		csrf := sha256.Sum256([]byte("csrf"))
+
+		mustCreateSession(t, ctx, userID, hashAncient[:], csrf[:], time.Now().Add(-10*24*time.Hour))
+		mustCreateSession(t, ctx, userID, hashRecent[:], csrf[:], time.Now().Add(-3*24*time.Hour))
+		mustCreateSession(t, ctx, userID, hashActive[:], csrf[:], time.Now().Add(24*time.Hour))
+
+		n, err := testStore.CleanupExpiredSessions(ctx, 7*24*time.Hour)
+		if err != nil {
+			t.Fatalf("CleanupExpiredSessions failed: %v", err)
+		}
+		if n < 1 {
+			t.Errorf("expected at least 1 deleted row, got %d", n)
+		}
+
+		if sessionExists(t, hashAncient[:]) {
+			t.Error("ancient session (10d expired) should have been deleted")
+		}
+		if !sessionExists(t, hashRecent[:]) {
+			t.Error("recent session (3d expired, inside 7d window) should be retained")
+		}
+		if !sessionExists(t, hashActive[:]) {
+			t.Error("active session should not be touched")
+		}
+	})
+
+	t.Run("returns zero when nothing to delete", func(t *testing.T) {
+		n, err := testStore.CleanupExpiredSessions(ctx, 7*24*time.Hour)
+		if err != nil {
+			t.Fatalf("CleanupExpiredSessions failed: %v", err)
+		}
+		// Can't assert exactly 0 (other tests may have left rows), just assert no error
+		_ = n
+	})
+}
+
 // --- DeleteAllUserSessions (Postgres) ---
 
 func TestDeleteAllUserSessionsPG(t *testing.T) {
