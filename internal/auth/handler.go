@@ -46,6 +46,15 @@ type Store interface {
 	CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error
 }
 
+// dummyPasswordHash is a precomputed Argon2id hash used for timing attack mitigation.
+// When a user doesn't exist, we verify against this dummy hash to ensure the same
+// computation time as verifying a real user's password (~100ms). This prevents attackers
+// from enumerating valid emails by measuring response times.
+//
+// Hash of the string "dummy-password-for-timing-attack-mitigation" with random salt.
+// Format: $argon2id$v=19$m=65536,t=3,p=2$<base64 salt>$<base64 hash>
+const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$YWJjZGVmZ2hpamtsbW5vcA$kC6C6jqLzC0JLlJgXhHbKMhLLpVvLJLLQw/IqT9ZYPU"
+
 // AuthHandler holds dependencies for all /auth/* HTTP handlers and middleware.
 // Inject PostgresStore and RedisStore at initialization, then share across all handlers.
 type AuthHandler struct {
@@ -201,7 +210,9 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// User not found or database error — return generic "invalid credentials"
 		if errors.Is(err, pgx.ErrNoRows) {
-			// User doesn't exist — log as info (expected behavior)
+			// User doesn't exist — run dummy hash verification to prevent timing attacks
+			// This ensures both paths (user exists vs doesn't exist) take equal time (~100ms)
+			VerifyPassword(loginInput.Password, dummyPasswordHash)
 			logInfo(r, "login attempted with non-existent email")
 		} else {
 			// Real database error — log as error for alerting

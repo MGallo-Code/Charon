@@ -13,6 +13,7 @@ import (
 
 	"github.com/MGallo-Code/charon/internal/store"
 	"github.com/gofrs/uuid/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -428,7 +429,7 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("non-existent user returns Unauthorized", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{getUserErr: errors.New("no rows")},
+			PS: &mockStore{getUserErr: pgx.ErrNoRows},
 			RS: &mockSessionCache{},
 		}
 
