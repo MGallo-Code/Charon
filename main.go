@@ -104,6 +104,15 @@ func run(cfg *config.Config) error {
 	r.Post("/registerEmail", h.RegisterByEmail)
 	r.Post("/loginEmail", h.LoginByEmail)
 
+	// Authentication Required routes...
+	r.Group(func(r chi.Router) {
+		r.Use(h.RequireAuth)
+		// CSRF reads token injected by RequireAuth above
+		// DO NOT RUN CSRF BEFORE RequireAuth
+		r.Use(h.CSRFMiddleware)
+		r.Post("/logout", h.Logout)
+	})
+
 	// Create server (& format port)
 	addr := ":" + cfg.Port
 	server := &http.Server{Addr: addr, Handler: r}
