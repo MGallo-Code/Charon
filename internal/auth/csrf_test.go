@@ -18,7 +18,8 @@ import (
 
 // mockSessionCache implements SessionCache for handler unit tests.
 type mockSessionCache struct {
-	sessions map[string]*store.CachedSession
+	sessions      map[string]*store.CachedSession
+	setSessionErr error
 }
 
 // GetSession retrieves a cached session by token hash from the mock store.
@@ -33,6 +34,9 @@ func (m *mockSessionCache) GetSession(_ context.Context, tokenHash string) (*sto
 // SetSession stores a session in the mock cache.
 // Stateful so round-trip tests (login → middleware) share the same session store.
 func (m *mockSessionCache) SetSession(_ context.Context, tokenHash string, sessionData store.Session, ttl int) error {
+	if m.setSessionErr != nil {
+		return m.setSessionErr
+	}
 	if m.sessions == nil {
 		m.sessions = make(map[string]*store.CachedSession)
 	}
