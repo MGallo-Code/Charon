@@ -36,8 +36,8 @@ func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 // TokenHashFromContext retrieves the session token hash from the request context.
 // Returns nil and false if not present (i.e. request didn't pass RequireAuth).
 func TokenHashFromContext(ctx context.Context) ([]byte, bool) {
-	hash, ok := ctx.Value(tokenHashKey).([32]byte)
-	return hash[:], ok
+	hash, ok := ctx.Value(tokenHashKey).([]byte)
+	return hash, ok
 }
 
 // RequireAuth is middleware that enforces session authentication.
@@ -107,7 +107,7 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 
 		// Inject the authenticated user_id and token hash into the request context.
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
-		ctx = context.WithValue(ctx, tokenHashKey, tokenHash)
+		ctx = context.WithValue(ctx, tokenHashKey, tokenHash[:])
 
 		// All good — pass the enriched context to the next handler.
 		next.ServeHTTP(w, r.WithContext(ctx))
