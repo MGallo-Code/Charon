@@ -25,6 +25,7 @@ type contextKey string
 
 const userIDKey contextKey = "user_id"
 const tokenHashKey contextKey = "token_hash"
+const csrfTokenKey contextKey = "csrf_token"
 
 // UserIDFromContext retrieves the authenticated user's ID from the request context.
 // Returns the zero UUID and false if not present (i.e. request didn't pass RequireAuth).
@@ -38,6 +39,13 @@ func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 func TokenHashFromContext(ctx context.Context) ([]byte, bool) {
 	hash, ok := ctx.Value(tokenHashKey).([]byte)
 	return hash, ok
+}
+
+// CSRFTokenFromContext retrieves the session's CSRF token from the request context.
+// Returns nil and false if not present (i.e. request didn't pass RequireAuth).
+func CSRFTokenFromContext(ctx context.Context) ([]byte, bool) {
+	token, ok := ctx.Value(csrfTokenKey).([]byte)
+	return token, ok
 }
 
 // RequireAuth is middleware that enforces session authentication.
@@ -73,6 +81,7 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 		// Check Redis for the session (fast path, ~0.1ms).
 		// On hit: session is implicitly valid — Redis TTL already expired any stale keys.
 		var userID uuid.UUID
+		var csrfToken []byte
 		sess, err := h.RS.GetSession(r.Context(), redisKey)
 		if err != nil {
 			// Redis miss — fall back to Postgres (~1-5ms).
@@ -101,13 +110,16 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 				logWarn(r, "failed to repopulate session cache", "error", err)
 			}
 			userID = pgSess.UserID
+			csrfToken = pgSess.CSRFToken
 		} else {
 			userID = sess.UserID
+			csrfToken = sess.CSRFToken
 		}
 
-		// Inject the authenticated user_id and token hash into the request context.
+		// Inject the authenticated user_id, tokenHash, csrfToken into the request context.
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
 		ctx = context.WithValue(ctx, tokenHashKey, tokenHash[:])
+		ctx = context.WithValue(ctx, csrfTokenKey, csrfToken)
 
 		// All good — pass the enriched context to the next handler.
 		next.ServeHTTP(w, r.WithContext(ctx))
