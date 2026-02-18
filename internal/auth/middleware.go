@@ -24,12 +24,20 @@ import (
 type contextKey string
 
 const userIDKey contextKey = "user_id"
+const tokenHashKey contextKey = "token_hash"
 
 // UserIDFromContext retrieves the authenticated user's ID from the request context.
 // Returns the zero UUID and false if not present (i.e. request didn't pass RequireAuth).
 func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(userIDKey).(uuid.UUID)
 	return id, ok
+}
+
+// TokenHashFromContext retrieves the session token hash from the request context.
+// Returns nil and false if not present (i.e. request didn't pass RequireAuth).
+func TokenHashFromContext(ctx context.Context) ([]byte, bool) {
+	hash, ok := ctx.Value(tokenHashKey).([32]byte)
+	return hash[:], ok
 }
 
 // RequireAuth is middleware that enforces session authentication.
@@ -59,8 +67,8 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 		// SHA-256 hash the raw token to produce the Redis lookup key.
-		hashed := sha256.Sum256(decoded)
-		redisKey := base64.RawURLEncoding.EncodeToString(hashed[:])
+		tokenHash := sha256.Sum256(decoded)
+		redisKey := base64.RawURLEncoding.EncodeToString(tokenHash[:])
 
 		// Check Redis for the session (fast path, ~0.1ms).
 		// On hit: session is implicitly valid — Redis TTL already expired any stale keys.
@@ -68,7 +76,7 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 		sess, err := h.RS.GetSession(r.Context(), redisKey)
 		if err != nil {
 			// Redis miss — fall back to Postgres (~1-5ms).
-			pgSess, err := h.PS.GetSessionByTokenHash(r.Context(), hashed[:])
+			pgSess, err := h.PS.GetSessionByTokenHash(r.Context(), tokenHash[:])
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					// Session not found or expired — expected, not a server error.
@@ -97,8 +105,9 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 			userID = sess.UserID
 		}
 
-		// Inject the authenticated user_id into the request context.
+		// Inject the authenticated user_id and token hash into the request context.
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
+		ctx = context.WithValue(ctx, tokenHashKey, tokenHash)
 
 		// All good — pass the enriched context to the next handler.
 		next.ServeHTTP(w, r.WithContext(ctx))
