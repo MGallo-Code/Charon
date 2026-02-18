@@ -1,16 +1,13 @@
 package auth
 
 import (
-	"crypto/sha256"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
-
-	"context"
 
 	"github.com/MGallo-Code/charon/internal/store"
 	"github.com/gofrs/uuid/v5"
@@ -64,49 +61,36 @@ var passHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) 
 })
 
 // csrfTestSetup holds all pieces needed for a valid CSRF request.
+// CSRFMiddleware now reads the stored token from context (injected by RequireAuth),
+// so setup injects the CSRF token directly — no session cache needed.
 type csrfTestSetup struct {
-	handler      http.Handler
-	sessionToken [32]byte // raw session token
-	csrfToken    [32]byte // raw CSRF token
-	cookieValue  string   // base64-encoded session token
-	headerValue  string   // base64-encoded CSRF token
+	handler     http.Handler
+	csrfToken   [32]byte // raw CSRF token
+	headerValue string   // base64-encoded CSRF token for X-CSRF-Token header
 }
 
-// newCSRFTestSetup creates handler wired to mock cache with matching session + CSRF.
-// Uses deterministic tokens so tests are reproducible.
+// newCSRFTestSetup creates a handler that simulates the RequireAuth → CSRFMiddleware chain.
+// It injects the CSRF token directly into context (as RequireAuth would), then wraps with CSRFMiddleware.
 func newCSRFTestSetup() csrfTestSetup {
-	// Deterministic tokens for testing
-	var sessionToken, csrfToken [32]byte
-	for i := range sessionToken {
-		sessionToken[i] = byte(i)
-	}
+	var csrfToken [32]byte
 	for i := range csrfToken {
 		csrfToken[i] = byte(i + 100)
 	}
 
-	tokenHash := sha256.Sum256(sessionToken[:])
-	tokenHashEncoded := base64.RawURLEncoding.EncodeToString(tokenHash[:])
+	h := &AuthHandler{}
 
-	// Mock session cache
-	mock := &mockSessionCache{
-		sessions: map[string]*store.CachedSession{
-			tokenHashEncoded: {
-				UserID:    uuid.Must(uuid.NewV4()),
-				CSRFToken: csrfToken[:],
-				ExpiresAt: time.Now().Add(24 * time.Hour),
-			},
-		},
+	// Simulate RequireAuth injecting the CSRF token into context.
+	injectCtx := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), csrfTokenKey, csrfToken[:])
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
 
-	// Create AuthHandler with mock redis store
-	h := &AuthHandler{RS: mock}
-	// Create test setup struct, add middleware that leads to status 200 on success, encode token vals
 	return csrfTestSetup{
-		handler:      h.CSRFMiddleware(passHandler),
-		sessionToken: sessionToken,
-		csrfToken:    csrfToken,
-		cookieValue:  base64.RawURLEncoding.EncodeToString(sessionToken[:]),
-		headerValue:  base64.RawURLEncoding.EncodeToString(csrfToken[:]),
+		handler:     injectCtx(h.CSRFMiddleware(passHandler)),
+		csrfToken:   csrfToken,
+		headerValue: base64.RawURLEncoding.EncodeToString(csrfToken[:]),
 	}
 }
 
@@ -278,51 +262,16 @@ func TestCSRFMiddleware(t *testing.T) {
 		assertForbidden(t, w.Result())
 	})
 
-	t.Run("POST without session cookie returns 403", func(t *testing.T) {
-		setup := newCSRFTestSetup()
+	t.Run("POST without CSRF token in context returns 403", func(t *testing.T) {
+		// Simulates RequireAuth not running, or context missing the CSRF token.
+		h := &AuthHandler{}
+		handler := h.CSRFMiddleware(passHandler)
+
 		req := httptest.NewRequest(http.MethodPost, "/action", nil)
-		req.Header.Set("X-CSRF-Token", setup.headerValue)
+		req.Header.Set("X-CSRF-Token", base64.RawURLEncoding.EncodeToString(make([]byte, 32)))
 		w := httptest.NewRecorder()
 
-		setup.handler.ServeHTTP(w, req)
-
-		assertForbidden(t, w.Result())
-	})
-
-	t.Run("POST with empty session cookie returns 403", func(t *testing.T) {
-		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
-		req.Header.Set("X-CSRF-Token", setup.headerValue)
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: ""})
-		w := httptest.NewRecorder()
-
-		setup.handler.ServeHTTP(w, req)
-
-		assertForbidden(t, w.Result())
-	})
-
-	t.Run("POST with invalid cookie encoding returns 403", func(t *testing.T) {
-		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
-		req.Header.Set("X-CSRF-Token", setup.headerValue)
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: "!!!bad-base64!!!"})
-		w := httptest.NewRecorder()
-
-		setup.handler.ServeHTTP(w, req)
-
-		assertForbidden(t, w.Result())
-	})
-
-	t.Run("POST with unknown session returns 403", func(t *testing.T) {
-		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
-		req.Header.Set("X-CSRF-Token", setup.headerValue)
-		// Valid base64 but not in mock cache
-		unknown := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: unknown})
-		w := httptest.NewRecorder()
-
-		setup.handler.ServeHTTP(w, req)
+		handler.ServeHTTP(w, req)
 
 		assertForbidden(t, w.Result())
 	})
@@ -333,7 +282,6 @@ func TestCSRFMiddleware(t *testing.T) {
 		// Wrong CSRF token (all zeros instead of real one)
 		wrong := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 		req.Header.Set("X-CSRF-Token", wrong)
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: setup.cookieValue})
 		w := httptest.NewRecorder()
 
 		setup.handler.ServeHTTP(w, req)
@@ -341,26 +289,19 @@ func TestCSRFMiddleware(t *testing.T) {
 		assertForbidden(t, w.Result())
 	})
 
-	t.Run("POST with short stored CSRF token returns 403", func(t *testing.T) {
-		// Session exists but server-side CSRF token is wrong length.
-		// Needs custom mock, so can't use newCSRFTestSetup() handler directly.
-		setup := newCSRFTestSetup()
-		tokenHash := sha256.Sum256(setup.sessionToken[:])
-		mock := &mockSessionCache{
-			sessions: map[string]*store.CachedSession{
-				base64.RawURLEncoding.EncodeToString(tokenHash[:]): {
-					UserID:    uuid.Must(uuid.NewV4()),
-					CSRFToken: make([]byte, 16), // wrong length
-					ExpiresAt: time.Now().Add(24 * time.Hour),
-				},
-			},
+	t.Run("POST with short stored CSRF token in context returns 403", func(t *testing.T) {
+		// Server-side CSRF token in context is wrong length (16 bytes instead of 32).
+		h := &AuthHandler{}
+		injectShort := func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx := context.WithValue(r.Context(), csrfTokenKey, make([]byte, 16))
+				next.ServeHTTP(w, r.WithContext(ctx))
+			})
 		}
-		h := &AuthHandler{RS: mock}
-		handler := h.CSRFMiddleware(passHandler)
+		handler := injectShort(h.CSRFMiddleware(passHandler))
 
 		req := httptest.NewRequest(http.MethodPost, "/action", nil)
-		req.Header.Set("X-CSRF-Token", setup.headerValue)
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: setup.cookieValue})
+		req.Header.Set("X-CSRF-Token", base64.RawURLEncoding.EncodeToString(make([]byte, 32)))
 		w := httptest.NewRecorder()
 
 		handler.ServeHTTP(w, req)
@@ -374,7 +315,6 @@ func TestCSRFMiddleware(t *testing.T) {
 		setup := newCSRFTestSetup()
 		req := httptest.NewRequest(http.MethodPost, "/action", nil)
 		req.Header.Set("X-CSRF-Token", setup.headerValue)
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: setup.cookieValue})
 		w := httptest.NewRecorder()
 
 		setup.handler.ServeHTTP(w, req)
@@ -388,7 +328,6 @@ func TestCSRFMiddleware(t *testing.T) {
 		setup := newCSRFTestSetup()
 		req := httptest.NewRequest(http.MethodPut, "/action", nil)
 		req.Header.Set("X-CSRF-Token", setup.headerValue)
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: setup.cookieValue})
 		w := httptest.NewRecorder()
 
 		setup.handler.ServeHTTP(w, req)
@@ -402,7 +341,6 @@ func TestCSRFMiddleware(t *testing.T) {
 		setup := newCSRFTestSetup()
 		req := httptest.NewRequest(http.MethodDelete, "/action", nil)
 		req.Header.Set("X-CSRF-Token", setup.headerValue)
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: setup.cookieValue})
 		w := httptest.NewRecorder()
 
 		setup.handler.ServeHTTP(w, req)
@@ -416,7 +354,6 @@ func TestCSRFMiddleware(t *testing.T) {
 		setup := newCSRFTestSetup()
 		req := httptest.NewRequest(http.MethodPatch, "/action", nil)
 		req.Header.Set("X-CSRF-Token", setup.headerValue)
-		req.AddCookie(&http.Cookie{Name: "__Host-session", Value: setup.cookieValue})
 		w := httptest.NewRecorder()
 
 		setup.handler.ServeHTTP(w, req)

@@ -23,6 +23,8 @@ type contextCapture struct {
 	userIDOK    bool
 	tokenHash   []byte
 	tokenHashOK bool
+	csrfToken   []byte
+	csrfTokenOK bool
 }
 
 // capturingHandler returns an http.Handler that records context values then responds 200.
@@ -31,6 +33,7 @@ func capturingHandler(cap *contextCapture) http.Handler {
 		cap.called = true
 		cap.userID, cap.userIDOK = UserIDFromContext(r.Context())
 		cap.tokenHash, cap.tokenHashOK = TokenHashFromContext(r.Context())
+		cap.csrfToken, cap.csrfTokenOK = CSRFTokenFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	})
 }
@@ -103,15 +106,16 @@ func TestRequireAuth(t *testing.T) {
 		}
 	})
 
-	t.Run("Redis hit calls next with userID and tokenHash in context", func(t *testing.T) {
+	t.Run("Redis hit calls next with userID, tokenHash, and csrfToken in context", func(t *testing.T) {
 		cookie, wantHash, redisKey := sessionFixture()
 		wantUserID := uuid.Must(uuid.NewV4())
+		wantCSRF := []byte("csrf-token-value")
 
 		mc := &mockSessionCache{
 			sessions: map[string]*store.CachedSession{
 				redisKey: {
 					UserID:    wantUserID,
-					CSRFToken: []byte("csrf"),
+					CSRFToken: wantCSRF,
 					ExpiresAt: time.Now().Add(time.Hour),
 				},
 			},
@@ -136,11 +140,15 @@ func TestRequireAuth(t *testing.T) {
 		if !cap.tokenHashOK || !bytes.Equal(cap.tokenHash, wantHash) {
 			t.Errorf("tokenHash: expected %x, got %x (ok=%v)", wantHash, cap.tokenHash, cap.tokenHashOK)
 		}
+		if !cap.csrfTokenOK || !bytes.Equal(cap.csrfToken, wantCSRF) {
+			t.Errorf("csrfToken: expected %x, got %x (ok=%v)", wantCSRF, cap.csrfToken, cap.csrfTokenOK)
+		}
 	})
 
 	t.Run("Redis miss Postgres hit calls next and repopulates Redis", func(t *testing.T) {
 		cookie, wantHash, redisKey := sessionFixture()
 		wantUserID := uuid.Must(uuid.NewV4())
+		wantCSRF := []byte("csrf-token-value")
 
 		mc := &mockSessionCache{} // empty — forces Redis miss
 		ms := &mockStore{
@@ -148,7 +156,7 @@ func TestRequireAuth(t *testing.T) {
 				ID:        uuid.Must(uuid.NewV4()),
 				UserID:    wantUserID,
 				TokenHash: wantHash,
-				CSRFToken: []byte("csrf"),
+				CSRFToken: wantCSRF,
 				ExpiresAt: time.Now().Add(time.Hour),
 			},
 		}
@@ -171,6 +179,9 @@ func TestRequireAuth(t *testing.T) {
 		}
 		if !cap.tokenHashOK || !bytes.Equal(cap.tokenHash, wantHash) {
 			t.Errorf("tokenHash: expected %x, got %x (ok=%v)", wantHash, cap.tokenHash, cap.tokenHashOK)
+		}
+		if !cap.csrfTokenOK || !bytes.Equal(cap.csrfToken, wantCSRF) {
+			t.Errorf("csrfToken: expected %x, got %x (ok=%v)", wantCSRF, cap.csrfToken, cap.csrfTokenOK)
 		}
 		// Middleware should have repopulated Redis after falling back to Postgres.
 		if _, ok := mc.sessions[redisKey]; !ok {
@@ -219,6 +230,7 @@ func TestRequireAuth(t *testing.T) {
 	t.Run("Redis repopulate failure is non-fatal", func(t *testing.T) {
 		cookie, wantHash, _ := sessionFixture()
 		wantUserID := uuid.Must(uuid.NewV4())
+		wantCSRF := []byte("csrf-token-value")
 
 		// Redis miss + SetSession fails, but Postgres succeeds — request should still pass.
 		mc := &mockSessionCache{setSessionErr: errors.New("redis unavailable")}
@@ -227,7 +239,7 @@ func TestRequireAuth(t *testing.T) {
 				ID:        uuid.Must(uuid.NewV4()),
 				UserID:    wantUserID,
 				TokenHash: wantHash,
-				CSRFToken: []byte("csrf"),
+				CSRFToken: wantCSRF,
 				ExpiresAt: time.Now().Add(time.Hour),
 			},
 		}
@@ -250,6 +262,9 @@ func TestRequireAuth(t *testing.T) {
 		}
 		if !cap.tokenHashOK || !bytes.Equal(cap.tokenHash, wantHash) {
 			t.Errorf("tokenHash: expected %x, got %x (ok=%v)", wantHash, cap.tokenHash, cap.tokenHashOK)
+		}
+		if !cap.csrfTokenOK || !bytes.Equal(cap.csrfToken, wantCSRF) {
+			t.Errorf("csrfToken: expected %x, got %x (ok=%v)", wantCSRF, cap.csrfToken, cap.csrfTokenOK)
 		}
 	})
 }
