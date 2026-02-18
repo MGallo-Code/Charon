@@ -606,3 +606,114 @@ func TestLoginByEmail(t *testing.T) {
 		}
 	})
 }
+
+// --- Logout ---
+
+// requestWithSession builds a request with userID and tokenHash pre-loaded into context,
+// simulating a request that has already passed through RequireAuth middleware.
+func requestWithSession(userID uuid.UUID, tokenHash []byte) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	ctx := context.WithValue(r.Context(), userIDKey, userID)
+	ctx = context.WithValue(ctx, tokenHashKey, tokenHash)
+	return r.WithContext(ctx)
+}
+
+// assertClearedSessionCookie checks that the __Host-session cookie is expired (MaxAge=-1).
+func assertClearedSessionCookie(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	cookies := w.Result().Cookies()
+	for _, c := range cookies {
+		if c.Name == "__Host-session" {
+			if c.MaxAge != -1 {
+				t.Errorf("cookie MaxAge: expected -1 (cleared), got %d", c.MaxAge)
+			}
+			if c.Value != "" {
+				t.Errorf("cookie Value: expected empty, got %q", c.Value)
+			}
+			return
+		}
+	}
+	t.Error("__Host-session cookie not found in response")
+}
+
+func TestLogout(t *testing.T) {
+	testUserID := uuid.Must(uuid.NewV7())
+	testTokenHash := []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") // 32 bytes
+
+	// -- Missing context values (500s) --
+
+	t.Run("missing userID in context returns InternalServerError", func(t *testing.T) {
+		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+
+		// No context values — simulates Logout being called without RequireAuth
+		r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+		w := httptest.NewRecorder()
+
+		h.Logout(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	t.Run("missing tokenHash in context returns InternalServerError", func(t *testing.T) {
+		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+
+		// Only userID in context — no tokenHash
+		r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+		ctx := context.WithValue(r.Context(), userIDKey, testUserID)
+		w := httptest.NewRecorder()
+
+		h.Logout(w, r.WithContext(ctx))
+
+		assertInternalServerError(t, w)
+	})
+
+	// -- Store errors (500s) --
+
+	t.Run("Postgres delete failure returns InternalServerError", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &mockStore{deleteSessionErr: errors.New("database write failed")},
+			RS: &mockSessionCache{},
+		}
+
+		r := requestWithSession(testUserID, testTokenHash)
+		w := httptest.NewRecorder()
+
+		h.Logout(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	// -- Non-fatal failures --
+
+	t.Run("Redis delete failure still returns OK", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &mockStore{},
+			RS: &mockSessionCache{deleteSessionErr: errors.New("redis unavailable")},
+		}
+
+		r := requestWithSession(testUserID, testTokenHash)
+		w := httptest.NewRecorder()
+
+		h.Logout(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+	})
+
+	// -- Happy path --
+
+	t.Run("valid session returns OK and clears cookie", func(t *testing.T) {
+		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+
+		r := requestWithSession(testUserID, testTokenHash)
+		w := httptest.NewRecorder()
+
+		h.Logout(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+		assertClearedSessionCookie(t, w)
+	})
+}
