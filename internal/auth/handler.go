@@ -30,6 +30,10 @@ type SessionCache interface {
 
 	// SetSession caches a session in Redis with the given TTL (in seconds).
 	SetSession(ctx context.Context, tokenHash string, sessionData store.Session, ttl int) error
+
+	// DeleteSession removes a single cached session by its token hash.
+	// Also removes the token hash from the user's tracking set.
+	DeleteSession(ctx context.Context, tokenHash string, userID uuid.UUID) error
 }
 
 // Store defines database operations needed by auth handlers.
@@ -47,6 +51,9 @@ type Store interface {
 	// GetSessionByTokenHash fetches a valid (non-expired) session by its token hash.
 	// Returns pgx.ErrNoRows if not found or expired.
 	GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*store.Session, error)
+
+	// DeleteSession removes a single session row by its token hash.
+	DeleteSession(ctx context.Context, tokenHash []byte) error
 }
 
 // dummyPasswordHash is a precomputed Argon2id hash used for timing attack mitigation.

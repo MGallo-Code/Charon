@@ -18,8 +18,9 @@ import (
 
 // mockSessionCache implements SessionCache for handler unit tests.
 type mockSessionCache struct {
-	sessions      map[string]*store.CachedSession
-	setSessionErr error
+	sessions         map[string]*store.CachedSession
+	setSessionErr    error
+	deleteSessionErr error
 }
 
 // GetSession retrieves a cached session by token hash from the mock store.
@@ -45,6 +46,15 @@ func (m *mockSessionCache) SetSession(_ context.Context, tokenHash string, sessi
 		CSRFToken: sessionData.CSRFToken,
 		ExpiresAt: sessionData.ExpiresAt,
 	}
+	return nil
+}
+
+// DeleteSession removes a session from the mock cache by token hash.
+func (m *mockSessionCache) DeleteSession(_ context.Context, tokenHash string, userID uuid.UUID) error {
+	if m.deleteSessionErr != nil {
+		return m.deleteSessionErr
+	}
+	delete(m.sessions, tokenHash)
 	return nil
 }
 

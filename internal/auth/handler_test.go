@@ -27,6 +27,7 @@ type mockStore struct {
 	createSessionErr      error
 	getSessionByTokenHash *store.Session
 	getSessionErr         error
+	deleteSessionErr      error
 }
 
 func (m *mockStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, email, passwordHash string) error {
@@ -49,6 +50,10 @@ func (m *mockStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte)
 		return nil, m.getSessionErr
 	}
 	return m.getSessionByTokenHash, nil
+}
+
+func (m *mockStore) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	return m.deleteSessionErr
 }
 
 // --- Helper Functions ---
