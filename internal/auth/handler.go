@@ -72,7 +72,7 @@ type AuthHandler struct {
 	RS SessionCache
 }
 
-// RegisterByEmail handles POST /auth/register for email + password signup.
+// RegisterByEmail handles POST /register for email + password signup.
 // Validates input, hashes password with Argon2id, and creates user in database.
 // Returns 201 with user_id on success, 400 for validation errors, 500 for server errors.
 // Does not reveal whether email already exists (returns generic 500 to prevent enumeration).
@@ -165,7 +165,7 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
-// LoginByEmail handles POST /auth/login for email + password authentication.
+// LoginByEmail handles POST /login for email + password authentication.
 // Validates credentials, creates session in Postgres + Redis, sets secure cookie.
 // Returns 200 with user_id and CSRF token on success, 401 for invalid credentials, 500 for server errors.
 // Uses generic error messages to prevent user enumeration (timing attacks mitigated by Argon2id).
@@ -307,4 +307,50 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		"csrf_token": csrfTokenEncoded,
 	})
 	w.Write(resp)
+}
+
+// Logout handles POST /logout for ending an authenticated session.
+// Deletes the session from Redis (non-fatal) and Postgres (fatal), then clears the cookie.
+// Returns 200 on success, 500 if the database delete fails.
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	// Attempt to fetch userID from context
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		logError(r, "logout called without user_id in context")
+		InternalServerError(w, r, errors.New("missing session context"))
+		return
+	}
+
+	// Attempt to fetch tokenHash from context
+	tokenHash, ok := TokenHashFromContext(r.Context())
+	if !ok {
+		logError(r, "logout called without token_hash in context")
+		InternalServerError(w, r, errors.New("missing session context"))
+		return
+	}
+
+	// Encode token hash to base64 string for Redis key lookup
+	redisKey := base64.RawURLEncoding.EncodeToString(tokenHash)
+
+	// Delete from Redis
+	if err := h.RS.DeleteSession(r.Context(), redisKey, userID); err != nil {
+		logWarn(r, "failed to delete session from redis", "error", err)
+	}
+
+	// Delete from Postgres
+	if err := h.PS.DeleteSession(r.Context(), tokenHash); err != nil {
+		// Fatal, because postgres is src of truth
+		logError(r, "failed to delete session from database", "error", err)
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Clear cookie
+	ClearSessionCookie(w)
+	logInfo(r, "user logged out", "user_id", userID)
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message":"logged out"}`))
 }
