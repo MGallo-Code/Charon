@@ -1,6 +1,6 @@
-// password.go -- Password hashing and verification using Argon2id.
-// All password comparisons use constant-time comparison (crypto/subtle).
+// password.go
 
+// Argon2id password hashing and verification.
 package auth
 
 import (
@@ -21,7 +21,7 @@ const (
 	argonKeyLen  = uint32(32)
 )
 
-// HashPassword takes a plaintext password and returns encoded Argon2id hash string.
+// HashPassword returns PHC-formatted Argon2id hash of plaintext password.
 // Format: $argon2id$v=19$m=65536,t=3,p=2$<base64 salt>$<base64 hash>
 func HashPassword(password string) (string, error) {
 	// Gen 16-byte random salt
@@ -45,8 +45,8 @@ func HashPassword(password string) (string, error) {
 	return encoded, nil
 }
 
-// VerifyPassword checks a plaintext password against an encoded Argon2id hash.
-// Extracts params from the stored hash so old passwords still verify if params change.
+// VerifyPassword checks plaintext password against stored Argon2id hash.
+// Extracts params from stored hash so old passwords verify after param changes.
 // Uses constant-time comparison to prevent timing attacks.
 func VerifyPassword(password, encodedHash string) (bool, error) {
 	// Split PHC string

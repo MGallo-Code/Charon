@@ -1,3 +1,6 @@
+// migrate.go
+
+// SQL migration runner using embedded filesystem.
 package store
 
 import (
@@ -8,9 +11,9 @@ import (
 	"sort"
 )
 
-// Migrate applies all pending SQL migrations from the given filesystem.
-// Each migration runs in its own transaction — if any statement fails,
-// that migration is rolled back entirely. Already-applied migrations are skipped.
+// Migrate applies pending SQL migrations from given filesystem.
+// Each migration runs in its own transaction; failures roll back that migration only.
+// Already-applied migrations are skipped.
 func (s *PostgresStore) Migrate(ctx context.Context, migrationsFS fs.FS) error {
 	// Create migration-tracking table if doesn't exist...
 	_, err := s.pool.Exec(ctx, `

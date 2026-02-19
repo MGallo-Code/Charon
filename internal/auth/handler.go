@@ -1,8 +1,4 @@
-// Package auth contains HTTP handlers and core authentication logic.
-//
 // handler.go -- HTTP handlers for all /auth/* endpoints.
-// Registers routes on a chi router, returns JSON responses.
-// Delegates to session, password, and csrf packages for logic.
 package auth
 
 import (
@@ -24,74 +20,62 @@ import (
 // SessionCache defines session cache operations needed by auth handlers.
 // Satisfied by *store.RedisStore — defined here (at consumer) per Go convention.
 type SessionCache interface {
-	// GetSession retrieves a cached session by its token hash.
-	// Returns nil if session not found or if Redis unavailable.
+	// GetSession retrieves cached session by token hash.
 	GetSession(ctx context.Context, tokenHash string) (*store.CachedSession, error)
 
-	// SetSession caches a session in Redis with the given TTL (in seconds).
+	// SetSession caches session with given TTL in seconds.
 	SetSession(ctx context.Context, tokenHash string, sessionData store.Session, ttl int) error
 
-	// DeleteSession removes a single cached session by its token hash.
-	// Also removes the token hash from the user's tracking set.
+	// DeleteSession removes session and its entry in the user tracking set.
 	DeleteSession(ctx context.Context, tokenHash string, userID uuid.UUID) error
 }
 
 // Store defines database operations needed by auth handlers.
 // Satisfied by *store.PostgresStore — defined here (at consumer) per Go convention.
 type Store interface {
-	// CreateUserByEmail inserts a new user with email and hashed password.
+	// CreateUserByEmail inserts new user with email and hashed password.
 	CreateUserByEmail(ctx context.Context, uuid uuid.UUID, email, passwordHash string) error
 
-	// GetUserByEmail fetches a user by their email address for login verification.
+	// GetUserByEmail fetches user by email for login verification.
 	GetUserByEmail(ctx context.Context, email string) (*store.User, error)
 
-	// CreateSession inserts a new session row with token hash and CSRF token.
+	// CreateSession inserts new session row with token hash and CSRF token.
 	CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error
 
-	// GetSessionByTokenHash fetches a valid (non-expired) session by its token hash.
+	// GetSessionByTokenHash fetches valid (non-expired) session by token hash.
 	// Returns pgx.ErrNoRows if not found or expired.
 	GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*store.Session, error)
 
-	// DeleteSession removes a single session row by its token hash.
+	// DeleteSession removes single session row by token hash.
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 }
 
-// dummyPasswordHash is a precomputed Argon2id hash used for timing attack mitigation.
-// When a user doesn't exist, we verify against this dummy hash to ensure the same
-// computation time as verifying a real user's password (~100ms). This prevents attackers
-// from enumerating valid emails by measuring response times.
-//
-// Hash of the string "dummy-password-for-timing-attack-mitigation" with random salt.
-// Format: $argon2id$v=19$m=65536,t=3,p=2$<base64 salt>$<base64 hash>
+// dummyPasswordHash is a precomputed Argon2id hash for timing attack mitigation.
+// When a user doesn't exist, verify against this so both paths take equal time (~100ms).
 const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$YWJjZGVmZ2hpamtsbW5vcA$kC6C6jqLzC0JLlJgXhHbKMhLLpVvLJLLQw/IqT9ZYPU"
 
 // AuthHandler holds dependencies for all /auth/* HTTP handlers and middleware.
-// Inject PostgresStore and RedisStore at initialization, then share across all handlers.
 type AuthHandler struct {
 	PS Store
 	RS SessionCache
 }
 
-// RegisterByEmail handles POST /register for email + password signup.
-// Validates input, hashes password with Argon2id, and creates user in database.
-// Returns 201 with user_id on success, 400 for validation errors, 500 for server errors.
-// Does not reveal whether email already exists (returns generic 500 to prevent enumeration).
+// RegisterByEmail handles POST /register — email + password signup.
+// Returns 201 with user_id, 400 for validation errors, 500 for server errors.
+// Never reveals whether email already exists.
 func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
-	// Define expected JSON input structure
 	var registerInput struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 
-	// Parse and validate JSON request body
-	err := json.NewDecoder(r.Body).Decode(&registerInput)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&registerInput); err != nil {
 		logWarn(r, "failed to decode register input", "error", err)
 		BadRequest(w, r, "error decoding request body")
 		return
 	}
 
-	// Validate email presence and length (RFC 5321: local@domain, min ~5, max 254)
+	// Validate email — RFC 5321: min ~5 chars, max 254.
 	if registerInput.Email == "" {
 		BadRequest(w, r, "No email provided")
 		return
@@ -105,14 +89,12 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "Email too long!")
 		return
 	}
-
-	// Validate email format using stdlib mail parser
 	if _, err := mail.ParseAddress(registerInput.Email); err != nil {
 		BadRequest(w, r, "Invalid email format")
 		return
 	}
 
-	// Validate password presence and length (min 6, max 128 to prevent DoS via Argon2id)
+	// Validate password — min 6, max 128 to prevent DoS via Argon2id.
 	if registerInput.Password == "" {
 		BadRequest(w, r, "No password provided!")
 		return
@@ -127,148 +109,120 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hash password with Argon2id (GPU-resistant, OWASP recommended)
 	hashedPassword, err := HashPassword(registerInput.Password)
 	if err != nil {
 		InternalServerError(w, r, err)
 		return
 	}
 
-	// Attempt to generate user ID
 	userID, err := uuid.NewV7()
 	if err != nil {
 		InternalServerError(w, r, err)
 		return
 	}
 
-	// Attempt to insert user w/ pg store
 	err = h.PS.CreateUserByEmail(r.Context(), userID, registerInput.Email, hashedPassword)
 	if err != nil {
-		// Check if error triggered Postgres unique constraint violation (duplicate email)
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			// Duplicate email — log as info, not error (expected user behavior)
+			// Duplicate email — expected behavior, not a server fault.
 			logInfo(r, "registration attempted with existing email")
 		} else {
-			// Real database failure — log as error for alerting
 			logError(r, "failed to create user", "error", err)
 		}
-		// Return generic error (DONT REVEAL IF EMAIL EXISTS OR NOT)
+		// Generic response — don't reveal whether email exists.
 		InternalServerError(w, r, err)
 		return
 	}
 
-	// Success! Return 201 with new user ID
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	resp, _ := json.Marshal(map[string]string{"user_id": userID.String()})
 	w.Write(resp)
 }
 
-// LoginByEmail handles POST /login for email + password authentication.
-// Validates credentials, creates session in Postgres + Redis, sets secure cookie.
-// Returns 200 with user_id and CSRF token on success, 401 for invalid credentials, 500 for server errors.
-// Uses generic error messages to prevent user enumeration (timing attacks mitigated by Argon2id).
+// LoginByEmail handles POST /login — email + password authentication.
+// Returns 200 with user_id and CSRF token, 401 for bad credentials, 500 for server errors.
+// Argon2id dummy-hash equalises timing when account doesn't exist.
 func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
-	// Define expected JSON input structure
 	var loginInput struct {
 		Email      string `json:"email"`
 		Password   string `json:"password"`
-		RememberMe bool   `json:"remember_me"` // Optional: extends session to 30 days instead of 24 hours
+		RememberMe bool   `json:"remember_me"` // extends session to 30d instead of 24h
 	}
 
-	// Parse and validate JSON request body
-	err := json.NewDecoder(r.Body).Decode(&loginInput)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&loginInput); err != nil {
 		logWarn(r, "failed to decode login input", "error", err)
 		BadRequest(w, r, "error decoding request body")
 		return
 	}
 
-	// Validate email and password presence (format validation unnecessary for login)
 	if loginInput.Email == "" || loginInput.Password == "" {
 		Unauthorized(w, r, "invalid credentials")
 		return
 	}
 
-	// Fetch user from database by email
 	user, err := h.PS.GetUserByEmail(r.Context(), loginInput.Email)
 	if err != nil {
-		// User not found or database error — return generic "invalid credentials"
 		if errors.Is(err, pgx.ErrNoRows) {
-			// User doesn't exist — run dummy hash verification to prevent timing attacks
-			// This ensures both paths (user exists vs doesn't exist) take equal time (~100ms)
+			// Run dummy hash to equalise timing with found-user path.
 			VerifyPassword(loginInput.Password, dummyPasswordHash)
 			logInfo(r, "login attempted with non-existent email")
 		} else {
-			// Real database error — log as error for alerting
 			logError(r, "failed to fetch user for login", "error", err)
 		}
-		// Always return same generic message (no user enumeration)
 		Unauthorized(w, r, "invalid credentials")
 		return
 	}
 
-	// Verify password using constant-time comparison (mitigates timing attacks)
 	valid, err := VerifyPassword(loginInput.Password, user.PasswordHash)
 	if err != nil {
-		// Hash format error or other verification failure
 		logError(r, "password verification failed", "error", err)
 		InternalServerError(w, r, err)
 		return
 	}
 	if !valid {
-		// Wrong password — log as info (expected behavior)
 		logInfo(r, "login attempted with incorrect password", "user_id", user.ID)
 		Unauthorized(w, r, "invalid credentials")
 		return
 	}
 
-	// Authentication successful! Create session.
-
-	// Generate cryptographically random session token + SHA-256 hash
 	token, tokenHash, err := GenerateToken()
 	if err != nil {
 		InternalServerError(w, r, err)
 		return
 	}
 
-	// Generate cryptographically random CSRF token for state-changing requests
 	csrfToken, err := GenerateCSRFToken()
 	if err != nil {
 		InternalServerError(w, r, err)
 		return
 	}
 
-	// Generate UUID v7 for session ID
 	sessionID, err := uuid.NewV7()
 	if err != nil {
 		InternalServerError(w, r, err)
 		return
 	}
 
-	// Calculate session expiry (24h default, 30d if remember_me)
+	// 24h default, 30d if remember_me.
 	var expiresAt time.Time
-	var ttl int // TTL in seconds for Redis and cookie MaxAge
+	var ttl int
 	if loginInput.RememberMe {
-		ttl = 30 * 24 * 60 * 60 // 30 days
+		ttl = 30 * 24 * 60 * 60
 		expiresAt = time.Now().Add(30 * 24 * time.Hour)
 	} else {
-		ttl = 24 * 60 * 60 // 24 hours
+		ttl = 24 * 60 * 60
 		expiresAt = time.Now().Add(24 * time.Hour)
 	}
 
-	// Extract IP address and user agent for audit logging
-	// RemoteAddr includes port (e.g., "192.168.65.1:46294"), but INET column expects just IP
+	// RemoteAddr includes port — INET column expects bare IP.
 	ipAddr, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		// If no port, use RemoteAddr as-is (shouldn't happen but be defensive)
 		ipAddr = r.RemoteAddr
 	}
 	userAgent := r.UserAgent()
 
-	// Store session in PostgreSQL (durable, source of truth)
-	// Convert array pointers to slices for storage
 	err = h.PS.CreateSession(r.Context(), sessionID, user.ID, tokenHash[:], csrfToken[:], expiresAt, &ipAddr, &userAgent)
 	if err != nil {
 		logError(r, "failed to create session in database", "error", err)
@@ -276,8 +230,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache session in Redis (fast path for validation, ~0.1ms vs ~1-5ms for Postgres)
-	// Convert token hash to string (Redis key) and session data struct
+	// Cache in Redis — non-fatal; Postgres is source of truth.
 	err = h.RS.SetSession(r.Context(), base64.RawURLEncoding.EncodeToString(tokenHash[:]), store.Session{
 		ID:        sessionID,
 		UserID:    user.ID,
@@ -286,19 +239,12 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: expiresAt,
 	}, ttl)
 	if err != nil {
-		// Redis cache failure is non-fatal (Postgres is source of truth)
-		// Log as warning but continue — session validation will fall back to Postgres
 		logWarn(r, "failed to cache session in redis", "error", err)
 	}
 
-	// Set secure session cookie (HttpOnly, Secure, SameSite=Lax, __Host- prefix)
-	// Dereference token pointer to get array value, pass expiresAt time
 	SetSessionCookie(w, *token, expiresAt)
-
-	// Log successful login for audit trail
 	logInfo(r, "user logged in successfully", "user_id", user.ID, "remember_me", loginInput.RememberMe)
 
-	// Return success with user ID and CSRF token (base64-encoded for client to send back in headers)
 	csrfTokenEncoded := base64.RawURLEncoding.EncodeToString(csrfToken[:])
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -309,11 +255,9 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
-// Logout handles POST /logout for ending an authenticated session.
-// Deletes the session from Redis (non-fatal) and Postgres (fatal), then clears the cookie.
-// Returns 200 on success, 500 if the database delete fails.
+// Logout handles POST /logout — ends authenticated session.
+// Deletes from Redis (non-fatal) then Postgres (fatal), clears cookie.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	// Attempt to fetch userID from context
 	userID, ok := UserIDFromContext(r.Context())
 	if !ok {
 		logError(r, "logout called without user_id in context")
@@ -321,7 +265,6 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Attempt to fetch tokenHash from context
 	tokenHash, ok := TokenHashFromContext(r.Context())
 	if !ok {
 		logError(r, "logout called without token_hash in context")
@@ -329,27 +272,21 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Encode token hash to base64 string for Redis key lookup
 	redisKey := base64.RawURLEncoding.EncodeToString(tokenHash)
 
-	// Delete from Redis
 	if err := h.RS.DeleteSession(r.Context(), redisKey, userID); err != nil {
 		logWarn(r, "failed to delete session from redis", "error", err)
 	}
 
-	// Delete from Postgres
 	if err := h.PS.DeleteSession(r.Context(), tokenHash); err != nil {
-		// Fatal, because postgres is src of truth
 		logError(r, "failed to delete session from database", "error", err)
 		InternalServerError(w, r, err)
 		return
 	}
 
-	// Clear cookie
 	ClearSessionCookie(w)
 	logInfo(r, "user logged out", "user_id", userID)
 
-	// Send response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"message":"logged out"}`))

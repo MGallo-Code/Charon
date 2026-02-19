@@ -1,8 +1,6 @@
-// redis.go -- go-redis client for session caching.
-//
-// Stores session data with TTL matching session expiry.
-// Fast path for session validation (~0.1ms vs ~1-5ms for Postgres).
-// If Redis is unavailable, falls back to Postgres.
+// redis.go
+
+// go-redis client for session caching.
 package store
 
 import (
@@ -15,14 +13,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisStore wraps a Redis client for session cache operations.
+// RedisStore wraps Redis client for session cache operations.
 type RedisStore struct {
 	rdb *redis.Client
 }
 
-// NewRedisStore connects to Redis and returns a ready-to-use cache store.
-// It pings Redis to verify connectivity before returning.
-// Call once at startup from main.go...returned store is safe for concurrent use.
+// NewRedisStore connects to Redis and returns ready-to-use store.
+// Pings Redis to verify connectivity before returning.
+// Call once at startup...returned store is safe for concurrent use.
 func NewRedisStore(ctx context.Context, redisURL string) (*RedisStore, error) {
 	// Parse redisURL to get option values, if err return it
 	opt, err := redis.ParseURL(redisURL)
@@ -34,16 +32,14 @@ func NewRedisStore(ctx context.Context, redisURL string) (*RedisStore, error) {
 	rdb := redis.NewClient(opt)
 
 	// Try and test client to ensure it works correctly
-	err = rdb.Ping(ctx).Err()
-	if err != nil {
+	if err = rdb.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("pinging redis: %w", err)
 	}
 
 	return &RedisStore{rdb}, nil
 }
 
-// Close shuts down the Redis client and releases all resources.
-// Should be called via defer in main.go after creating the store.
+// Close shuts down Redis client and releases all resources.
 func (s *RedisStore) Close() error {
 	if err := s.rdb.Close(); err != nil {
 		return fmt.Errorf("closing redis: %w", err)
@@ -51,8 +47,8 @@ func (s *RedisStore) Close() error {
 	return nil
 }
 
-// SetSession caches a session in Redis with given TTL (in seconds).
-// Also tracks token hash in per-user Set for bulk deletion.
+// SetSession caches session with given TTL in seconds.
+// Also tracks token hash in per-user set for bulk deletion.
 func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionData Session, ttl int) error {
 	// Put session data into json string format for redis-structured session obj
 	cacheOut, err := json.Marshal(CachedSession{
@@ -97,8 +93,8 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 	return nil
 }
 
-// GetSession retrieves a cached session by its token hash.
-// Returns nil if session not found or if Redis unavailable.
+// GetSession retrieves cached session by token hash.
+// Returns error on miss or if Redis unavailable.
 func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedSession, error) {
 	// Attempt to get session JSON from redis cache
 	raw, err := s.rdb.Get(ctx, fmt.Sprintf("session:%s", tokenHash)).Result()
@@ -115,8 +111,7 @@ func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedS
 	return &cached, nil
 }
 
-// DeleteSession removes a single session from cache by its token hash.
-// Also removes the token hash from the user's tracking Set.
+// DeleteSession removes session from cache and from user tracking set.
 func (s *RedisStore) DeleteSession(ctx context.Context, tokenHash string, userID uuid.UUID) error {
 	pipe := s.rdb.TxPipeline()
 
@@ -133,7 +128,7 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tokenHash string, userID
 }
 
 // DeleteAllUserSessions removes all cached sessions for given user.
-// Uses per-user Redis Set to track which token hashes belong to user.
+// Uses per-user set to find all token hashes belonging to user.
 func (s *RedisStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error {
 	setKey := fmt.Sprintf("user_sessions:%s", userID)
 

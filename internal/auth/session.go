@@ -1,9 +1,6 @@
-// session.go -- Session token generation, validation, and destruction.
-//
-// Tokens: 256-bit cryptographically random (crypto/rand).
-// Storage: tokens are SHA-256 hashed before storing (never store plaintext).
-// Validation: check Redis first (fast path), fall back to Postgres.
-// Cookies: HttpOnly, Secure, SameSite=Lax, __Host-session prefix.
+// session.go
+
+// Session token generation and cookie management.
 package auth
 
 import (
@@ -15,8 +12,8 @@ import (
 	"time"
 )
 
-// GenerateToken creates a 256-bit cryptographically random session token
-// and returns both the raw token (for the cookie) and its SHA-256 hash (for storage).
+// GenerateToken returns 256-bit random session token and its SHA-256 hash.
+// Token goes in the cookie; hash goes in storage.
 func GenerateToken() (*[32]byte, *[32]byte, error) {
 	var token [32]byte
 	_, err := rand.Read(token[:])
@@ -27,8 +24,7 @@ func GenerateToken() (*[32]byte, *[32]byte, error) {
 	return &token, &hash, nil
 }
 
-// SetSessionCookie writes a __Host-session cookie to the response with the raw token.
-// Uses HttpOnly, Secure, SameSite=Lax, Path=/ (required by __Host- prefix).
+// SetSessionCookie writes __Host-session cookie with HttpOnly, Secure, SameSite=Lax.
 func SetSessionCookie(w http.ResponseWriter, rawToken [32]byte, expiresAt time.Time) {
 	// Convert vars and set cookie ( *  v  * )
 	http.SetCookie(w, &http.Cookie{
@@ -42,8 +38,7 @@ func SetSessionCookie(w http.ResponseWriter, rawToken [32]byte, expiresAt time.T
 	})
 }
 
-// ClearSessionCookie overwrites the __Host-session cookie with an empty value
-// and MaxAge=-1, telling the browser to delete it immediately. Used for logout.
+// ClearSessionCookie overwrites __Host-session with MaxAge=-1 to trigger browser deletion.
 func ClearSessionCookie(w http.ResponseWriter) {
 	// Essentially just nulling out cookie by setting new expired vals
 	http.SetCookie(w, &http.Cookie{

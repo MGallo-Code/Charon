@@ -1,8 +1,6 @@
-// csrf.go -- CSRF token generation and validation.
-//
-// Generates a per-session CSRF token (crypto/rand).
-// Validates on all state-changing requests (POST, PUT, DELETE).
-// SameSite=Lax handles most cases; CSRF tokens cover the rest.
+// csrf.go
+
+// CSRF token generation and validation.
 package auth
 
 import (
@@ -13,8 +11,7 @@ import (
 	"net/http"
 )
 
-// GenerateCSRFToken creates a 256-bit cryptographically random CSRF token
-// and returns a pointer to the raw token for storage and client delivery.
+// GenerateCSRFToken returns 256-bit cryptographically random CSRF token.
 func GenerateCSRFToken() (*[32]byte, error) {
 	var token [32]byte
 	_, err := rand.Read(token[:])
@@ -24,23 +21,20 @@ func GenerateCSRFToken() (*[32]byte, error) {
 	return &token, nil
 }
 
-// ValidateCSRFToken compares a raw CSRF token from the request against
-// the stored token using constant-time comparison to prevent timing attacks.
+// ValidateCSRFToken compares provided and stored tokens using constant-time comparison.
 func ValidateCSRFToken(provided, stored [32]byte) bool {
 	return subtle.ConstantTimeCompare(provided[:], stored[:]) == 1
 }
 
-// csrfForbidden writes a generic 403 JSON response for CSRF failures.
-// Intentionally vague to avoid leaking validation stage.
+// csrfForbidden writes generic 403 JSON, intentionally vague to avoid leaking validation stage.
 func csrfForbidden(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
 	w.Write([]byte(`{"error":"forbidden"}`))
 }
 
-// CSRFMiddleware enforces CSRF protection on state-changing requests
-// (POST, PUT, DELETE, PATCH). Reads token from X-CSRF-Token header,
-// validates it against the CSRF token injected by RequireAuth, and rejects mismatches with 403.
+// CSRFMiddleware enforces CSRF protection on state-changing requests (POST, PUT, DELETE, PATCH).
+// Reads token from X-CSRF-Token header, validates against token injected by RequireAuth.
 // Must run after RequireAuth in the middleware chain.
 func (h *AuthHandler) CSRFMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +48,8 @@ func (h *AuthHandler) CSRFMiddleware(next http.Handler) http.Handler {
 				csrfForbidden(w)
 				return
 			}
-			// Read the session's CSRF token injected by RequireAuth — no extra DB/Redis lookup.
+
+			// Read token injected by RequireAuth, no extra DB/Redis lookup.
 			storedCSRFToken, ok := CSRFTokenFromContext(r.Context())
 			if !ok || len(storedCSRFToken) != 32 {
 				logWarn(r, "csrf validation failed", "reason", "missing_csrf_context")

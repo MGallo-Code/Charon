@@ -1,8 +1,6 @@
-// Package store handles all database and cache interactions.
-//
-// postgres.go -- pgxpool connection setup and queries.
-// Creates a connection pool at startup, shared across all handlers.
-// All queries use parameterized statements (no string concatenation).
+// postgres.go
+
+// pgxpool connection setup and SQL queries.
 package store
 
 import (
@@ -14,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PostgresStore wraps a pgxpool connection pool for database ops
+// PostgresStore wraps pgxpool connection pool for database ops
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
@@ -37,15 +35,14 @@ func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, 
 	return &PostgresStore{pool}, nil
 }
 
-// Close shuts down the connection pool and releases all resources.
-// Call using defer in main.go after creating the store.
+// Close shuts down connection pool, releases all resources.
 func (s *PostgresStore) Close() {
 	s.pool.Close()
 }
 
-// CreateUserByEmail inserts a new user with email + password credentials.
-// The caller has to generate the UUID v7 and Argon2id hash BEFORE calling this.
-// Returns raw pgx error, handler inspects it for unique violations (duplicate email, etc...)
+// CreateUserByEmail inserts new user with email and password hash.
+// Caller generates UUID v7 and Argon2id hash before calling.
+// Returns raw pgx error so handler can inspect for unique violations.
 func (s *PostgresStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, email string, passwordHash string) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO users
@@ -59,8 +56,7 @@ func (s *PostgresStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, ema
 	return nil
 }
 
-// GetUserByEmail fetches a user by their email address.
-// (For login by email for verification)
+// GetUserByEmail fetches user by email address.
 // Returns pgx.ErrNoRows if no user exists with that email.
 func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	// Initialize user pointer
@@ -88,8 +84,7 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 	return user, nil
 }
 
-// GetUserByID fetches a user by their UUID.
-// For after login, profile lookups, password changes, etc...
+// GetUserByID fetches user by UUID.
 // Returns pgx.ErrNoRows if no user exists with that ID.
 func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	// Init user var
@@ -117,9 +112,9 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 	return user, nil
 }
 
-// CreateSession inserts a new session row in the sessions table.
-// Caller generates the UUID v7, hashes the token (SHA-256), and sets expiresAt.
-// ip and userAgent are optional (nullable) — pass nil to omit.
+// CreateSession inserts new session row.
+// Caller generates UUID v7, SHA-256 token hash, and expiresAt before calling.
+// ip and userAgent are optional - pass nil to omit.
 func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error {
 	// Insert session into pg table
 	_, err := s.pool.Exec(ctx, `
@@ -135,8 +130,7 @@ func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID 
 	return nil
 }
 
-// GetSessionByTokenHash fetches a session by its hashed token.
-// Only returns sessions that have not expired (WHERE expires_at > NOW()).
+// GetSessionByTokenHash fetches non-expired session by hashed token.
 // Returns pgx.ErrNoRows if no valid session exists with that hash.
 func (s *PostgresStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*Session, error) {
 	// Init sesh obj..
@@ -184,9 +178,9 @@ func (s *PostgresStore) DeleteAllUserSessions(ctx context.Context, userID uuid.U
 	return nil
 }
 
-// CleanupExpiredSessions deletes sessions expired before the retention cutoff.
-// Call with a retention period (e.g. 7 * 24 * time.Hour) to keep a grace window
-// for audit logs before permanent deletion. Returns the number of rows deleted.
+// CleanupExpiredSessions deletes sessions expired before retention cutoff.
+// Pass a grace window (e.g. 7*24*time.Hour) to retain sessions for audit before deletion.
+// Returns rows deleted.
 func (s *PostgresStore) CleanupExpiredSessions(ctx context.Context, retention time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-retention)
 	result, err := s.pool.Exec(ctx, `

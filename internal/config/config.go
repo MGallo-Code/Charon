@@ -1,4 +1,6 @@
-// Package config loads and validates environment variables.
+// config.go
+
+// Environment variable loading and validation.
 package config
 
 import (

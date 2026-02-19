@@ -1,3 +1,6 @@
+// password_test.go
+
+// unit tests for HashPassword and VerifyPassword.
 package auth
 
 import (

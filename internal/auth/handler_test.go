@@ -1,3 +1,7 @@
+// handler_test.go
+
+// unit tests for RegisterByEmail, LoginByEmail, and Logout handlers.
+
 package auth
 
 import (
@@ -123,7 +127,7 @@ func assertOK(t *testing.T, w *httptest.ResponseRecorder) {
 	}
 }
 
-// assertSessionCookie checks that the __Host-session cookie is set with correct security attributes.
+// assertSessionCookie checks __Host-session cookie has correct security attributes.
 func assertSessionCookie(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
 	cookies := w.Result().Cookies()
@@ -258,7 +262,7 @@ func TestRegisterByEmail(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
 		h := AuthHandler{PS: &mockStore{}}
 
-		// Body w// invalid email format
+		// No @ sign — fails format check
 		body := strings.NewReader(`{"email":"notanemail","password":"validpassword123"}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
 		w := httptest.NewRecorder()
@@ -380,7 +384,7 @@ func TestRegisterByEmail(t *testing.T) {
 // --- LoginByEmail ---
 
 func TestLoginByEmail(t *testing.T) {
-	// Create a test user with a known password hash
+	// Shared test user with known password for auth path tests.
 	testPassword := "password123"
 	testHash, _ := HashPassword(testPassword)
 	testEmail := "test@example.com"
@@ -406,6 +410,7 @@ func TestLoginByEmail(t *testing.T) {
 	t.Run("invalid JSON returns BadRequest", func(t *testing.T) {
 		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
 
+		// Invalid JSON body
 		body := strings.NewReader(`{not valid json}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
 		w := httptest.NewRecorder()
@@ -473,7 +478,7 @@ func TestLoginByEmail(t *testing.T) {
 
 	// -- Database/system errors (500s) --
 
-	t.Run("database error when fetching user returns InternalServerError", func(t *testing.T) {
+	t.Run("database error when fetching user returns Unauthorized", func(t *testing.T) {
 		h := AuthHandler{
 			PS: &mockStore{getUserErr: errors.New("database connection failed")},
 			RS: &mockSessionCache{},
@@ -609,8 +614,8 @@ func TestLoginByEmail(t *testing.T) {
 
 // --- Logout ---
 
-// requestWithSession builds a request with userID and tokenHash pre-loaded into context,
-// simulating a request that has already passed through RequireAuth middleware.
+// requestWithSession builds request with userID and tokenHash pre-loaded into context,
+// simulates a request that has already passed through RequireAuth middleware.
 func requestWithSession(userID uuid.UUID, tokenHash []byte) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	ctx := context.WithValue(r.Context(), userIDKey, userID)
@@ -618,7 +623,7 @@ func requestWithSession(userID uuid.UUID, tokenHash []byte) *http.Request {
 	return r.WithContext(ctx)
 }
 
-// assertClearedSessionCookie checks that the __Host-session cookie is expired (MaxAge=-1).
+// assertClearedSessionCookie checks __Host-session cookie has MaxAge=-1 and empty value.
 func assertClearedSessionCookie(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
 	cookies := w.Result().Cookies()
@@ -645,7 +650,7 @@ func TestLogout(t *testing.T) {
 	t.Run("missing userID in context returns InternalServerError", func(t *testing.T) {
 		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
 
-		// No context values — simulates Logout being called without RequireAuth
+		// No context values — simulates Logout called without RequireAuth.
 		r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 		w := httptest.NewRecorder()
 
@@ -657,7 +662,7 @@ func TestLogout(t *testing.T) {
 	t.Run("missing tokenHash in context returns InternalServerError", func(t *testing.T) {
 		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
 
-		// Only userID in context — no tokenHash
+		// userID present but tokenHash missing
 		r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 		ctx := context.WithValue(r.Context(), userIDKey, testUserID)
 		w := httptest.NewRecorder()

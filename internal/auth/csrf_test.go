@@ -1,3 +1,6 @@
+// csrf_test.go
+
+// unit tests for GenerateCSRFToken, ValidateCSRFToken, and CSRFMiddleware.
 package auth
 
 import (
@@ -13,14 +16,14 @@ import (
 	"github.com/gofrs/uuid/v5"
 )
 
-// mockSessionCache implements SessionCache for handler unit tests.
+// mockSessionCache implements SessionCache for unit tests.
 type mockSessionCache struct {
 	sessions         map[string]*store.CachedSession
 	setSessionErr    error
 	deleteSessionErr error
 }
 
-// GetSession retrieves a cached session by token hash from the mock store.
+// GetSession retrieves session by token hash.
 func (m *mockSessionCache) GetSession(_ context.Context, tokenHash string) (*store.CachedSession, error) {
 	s, ok := m.sessions[tokenHash]
 	if !ok {
@@ -29,8 +32,7 @@ func (m *mockSessionCache) GetSession(_ context.Context, tokenHash string) (*sto
 	return s, nil
 }
 
-// SetSession stores a session in the mock cache.
-// Stateful so round-trip tests (login → middleware) share the same session store.
+// SetSession stores session in mock cache. Stateful for round-trip tests.
 func (m *mockSessionCache) SetSession(_ context.Context, tokenHash string, sessionData store.Session, ttl int) error {
 	if m.setSessionErr != nil {
 		return m.setSessionErr
@@ -46,7 +48,7 @@ func (m *mockSessionCache) SetSession(_ context.Context, tokenHash string, sessi
 	return nil
 }
 
-// DeleteSession removes a session from the mock cache by token hash.
+// DeleteSession removes session by token hash.
 func (m *mockSessionCache) DeleteSession(_ context.Context, tokenHash string, userID uuid.UUID) error {
 	if m.deleteSessionErr != nil {
 		return m.deleteSessionErr
@@ -60,17 +62,16 @@ var passHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 })
 
-// csrfTestSetup holds all pieces needed for a valid CSRF request.
-// CSRFMiddleware now reads the stored token from context (injected by RequireAuth),
+// csrfTestSetup holds handler and CSRF token for CSRFMiddleware tests.
+// CSRFMiddleware reads the stored token from context (injected by RequireAuth),
 // so setup injects the CSRF token directly — no session cache needed.
 type csrfTestSetup struct {
 	handler     http.Handler
 	csrfToken   [32]byte // raw CSRF token
-	headerValue string   // base64-encoded CSRF token for X-CSRF-Token header
+	headerValue string   // base64-encoded for X-CSRF-Token header
 }
 
-// newCSRFTestSetup creates a handler that simulates the RequireAuth → CSRFMiddleware chain.
-// It injects the CSRF token directly into context (as RequireAuth would), then wraps with CSRFMiddleware.
+// newCSRFTestSetup builds handler simulating RequireAuth -> CSRFMiddleware with injected CSRF token.
 func newCSRFTestSetup() csrfTestSetup {
 	var csrfToken [32]byte
 	for i := range csrfToken {
@@ -79,7 +80,7 @@ func newCSRFTestSetup() csrfTestSetup {
 
 	h := &AuthHandler{}
 
-	// Simulate RequireAuth injecting the CSRF token into context.
+	// Inject CSRF token as RequireAuth would.
 	injectCtx := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), csrfTokenKey, csrfToken[:])
@@ -183,7 +184,7 @@ func TestCSRFMiddleware(t *testing.T) {
 		// Setup mock
 		setup := newCSRFTestSetup()
 		// GET req to generic route
-		req := httptest.NewRequest(http.MethodGet, "/anything", nil)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		// Test writer/recorder
 		w := httptest.NewRecorder()
 
@@ -200,7 +201,7 @@ func TestCSRFMiddleware(t *testing.T) {
 		// Setup mock
 		setup := newCSRFTestSetup()
 		// HEAD req
-		req := httptest.NewRequest(http.MethodHead, "/anything", nil)
+		req := httptest.NewRequest(http.MethodHead, "/", nil)
 		w := httptest.NewRecorder()
 
 		// ServE!
@@ -215,7 +216,7 @@ func TestCSRFMiddleware(t *testing.T) {
 		// Setup mock
 		setup := newCSRFTestSetup()
 		// OPTIONS req
-		req := httptest.NewRequest(http.MethodOptions, "/anything", nil)
+		req := httptest.NewRequest(http.MethodOptions, "/", nil)
 		w := httptest.NewRecorder()
 
 		// ServE!
@@ -230,7 +231,7 @@ func TestCSRFMiddleware(t *testing.T) {
 
 	t.Run("POST without CSRF header returns 403", func(t *testing.T) {
 		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
 		w := httptest.NewRecorder()
 
 		setup.handler.ServeHTTP(w, req)
@@ -240,7 +241,7 @@ func TestCSRFMiddleware(t *testing.T) {
 
 	t.Run("POST with invalid base64 CSRF header returns 403", func(t *testing.T) {
 		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
 		req.Header.Set("X-CSRF-Token", "!!!not-valid-base64!!!")
 		w := httptest.NewRecorder()
 
@@ -251,8 +252,8 @@ func TestCSRFMiddleware(t *testing.T) {
 
 	t.Run("POST with wrong-length CSRF token returns 403", func(t *testing.T) {
 		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
-		// 16 bytes instead of 32
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		// 16 bytes instead of required 32
 		short := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
 		req.Header.Set("X-CSRF-Token", short)
 		w := httptest.NewRecorder()
@@ -267,7 +268,7 @@ func TestCSRFMiddleware(t *testing.T) {
 		h := &AuthHandler{}
 		handler := h.CSRFMiddleware(passHandler)
 
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
 		req.Header.Set("X-CSRF-Token", base64.RawURLEncoding.EncodeToString(make([]byte, 32)))
 		w := httptest.NewRecorder()
 
@@ -278,7 +279,7 @@ func TestCSRFMiddleware(t *testing.T) {
 
 	t.Run("POST with CSRF token mismatch returns 403", func(t *testing.T) {
 		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
 		// Wrong CSRF token (all zeros instead of real one)
 		wrong := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 		req.Header.Set("X-CSRF-Token", wrong)
@@ -290,7 +291,8 @@ func TestCSRFMiddleware(t *testing.T) {
 	})
 
 	t.Run("POST with short stored CSRF token in context returns 403", func(t *testing.T) {
-		// Server-side CSRF token in context is wrong length (16 bytes instead of 32).
+		// Server-side token wrong length (16 bytes instead of 32)
+		// (guards against corrupt context)
 		h := &AuthHandler{}
 		injectShort := func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -300,7 +302,7 @@ func TestCSRFMiddleware(t *testing.T) {
 		}
 		handler := injectShort(h.CSRFMiddleware(passHandler))
 
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
 		req.Header.Set("X-CSRF-Token", base64.RawURLEncoding.EncodeToString(make([]byte, 32)))
 		w := httptest.NewRecorder()
 
@@ -313,7 +315,7 @@ func TestCSRFMiddleware(t *testing.T) {
 
 	t.Run("POST with valid CSRF passes through", func(t *testing.T) {
 		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPost, "/action", nil)
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
 		req.Header.Set("X-CSRF-Token", setup.headerValue)
 		w := httptest.NewRecorder()
 
@@ -326,7 +328,7 @@ func TestCSRFMiddleware(t *testing.T) {
 
 	t.Run("PUT with valid CSRF passes through", func(t *testing.T) {
 		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPut, "/action", nil)
+		req := httptest.NewRequest(http.MethodPut, "/", nil)
 		req.Header.Set("X-CSRF-Token", setup.headerValue)
 		w := httptest.NewRecorder()
 
@@ -339,7 +341,7 @@ func TestCSRFMiddleware(t *testing.T) {
 
 	t.Run("DELETE with valid CSRF passes through", func(t *testing.T) {
 		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodDelete, "/action", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/", nil)
 		req.Header.Set("X-CSRF-Token", setup.headerValue)
 		w := httptest.NewRecorder()
 
@@ -352,7 +354,7 @@ func TestCSRFMiddleware(t *testing.T) {
 
 	t.Run("PATCH with valid CSRF passes through", func(t *testing.T) {
 		setup := newCSRFTestSetup()
-		req := httptest.NewRequest(http.MethodPatch, "/action", nil)
+		req := httptest.NewRequest(http.MethodPatch, "/", nil)
 		req.Header.Set("X-CSRF-Token", setup.headerValue)
 		w := httptest.NewRecorder()
 

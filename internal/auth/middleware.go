@@ -1,8 +1,6 @@
-// middleware.go -- HTTP middleware for the auth service.
-//
-// RequireAuth validates the session cookie on every protected request.
-// Checks Redis first (fast path, ~0.1ms), falls back to Postgres on miss (~1-5ms).
-// Injects user_id into request context for downstream handlers.
+// middleware.go
+
+// Session authentication middleware.
 package auth
 
 import (
@@ -18,44 +16,39 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// contextKey is an unexported type for context keys in this package.
-// Using a named type (not plain string) prevents collisions with other
-// packages that may also store values on the same request context.
+// contextKey is unexported to prevent collisions with other packages using the same context.
 type contextKey string
 
 const userIDKey contextKey = "user_id"
 const tokenHashKey contextKey = "token_hash"
 const csrfTokenKey contextKey = "csrf_token"
 
-// UserIDFromContext retrieves the authenticated user's ID from the request context.
-// Returns the zero UUID and false if not present (i.e. request didn't pass RequireAuth).
+// UserIDFromContext retrieves authenticated user's ID from context.
+// Returns zero UUID and false if RequireAuth hasn't run.
 func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(userIDKey).(uuid.UUID)
 	return id, ok
 }
 
-// TokenHashFromContext retrieves the session token hash from the request context.
-// Returns nil and false if not present (i.e. request didn't pass RequireAuth).
+// TokenHashFromContext retrieves session token hash from context.
+// Returns nil and false if RequireAuth hasn't run.
 func TokenHashFromContext(ctx context.Context) ([]byte, bool) {
 	hash, ok := ctx.Value(tokenHashKey).([]byte)
 	return hash, ok
 }
 
-// CSRFTokenFromContext retrieves the session's CSRF token from the request context.
-// Returns nil and false if not present (i.e. request didn't pass RequireAuth).
+// CSRFTokenFromContext retrieves session CSRF token from context.
+// Returns nil and false if RequireAuth hasn't run.
 func CSRFTokenFromContext(ctx context.Context) ([]byte, bool) {
 	token, ok := ctx.Value(csrfTokenKey).([]byte)
 	return token, ok
 }
 
-// RequireAuth is middleware that enforces session authentication.
-// Reads the __Host-session cookie, hashes the token, and validates
-// the session against Redis (fast path) then Postgres (fallback).
-// On success, injects the user_id into the request context and calls next.
-// On failure, returns 401 with a generic error — no detail about why.
+// RequireAuth validates the session cookie, checking Redis then Postgres as fallback.
+// Injects user_id, token_hash, and csrf_token into context on success; returns 401 on failure.
 func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Read the __Host-session cookie. Missing or empty → 401.
+		// Read the __Host-session cookie. If missing or empty, 401 ERR
 		sessCookie, err := r.Cookie("__Host-session")
 		if err != nil {
 			logWarn(r, "require auth failed", "reason", "missing_session_cookie")
@@ -78,27 +71,23 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 		tokenHash := sha256.Sum256(decoded)
 		redisKey := base64.RawURLEncoding.EncodeToString(tokenHash[:])
 
-		// Check Redis for the session (fast path, ~0.1ms).
-		// On hit: session is implicitly valid — Redis TTL already expired any stale keys.
+		// Redis fast path, TTL expiry already handles stale keys.
 		var userID uuid.UUID
 		var csrfToken []byte
 		sess, err := h.RS.GetSession(r.Context(), redisKey)
 		if err != nil {
-			// Redis miss — fall back to Postgres (~1-5ms).
+			// Redis miss, fall back to Postgres.
 			pgSess, err := h.PS.GetSessionByTokenHash(r.Context(), tokenHash[:])
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
-					// Session not found or expired — expected, not a server error.
 					logWarn(r, "require auth failed", "reason", "session_not_found")
 				} else {
-					// Real database failure — unexpected, needs alerting.
 					logError(r, "require auth failed fetching session from db", "error", err)
 				}
 				Unauthorized(w, r, "unauthorized")
 				return
 			}
-			// Repopulate Redis so the next request hits the cache.
-			// Non-fatal: a cache miss on the next request is acceptable.
+			// Repopulate cache, non-fatal on failure.
 			ttl := max(0, int(time.Until(pgSess.ExpiresAt).Seconds()))
 			if err := h.RS.SetSession(r.Context(), redisKey, store.Session{
 				ID:        pgSess.ID,
@@ -116,12 +105,11 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 			csrfToken = sess.CSRFToken
 		}
 
-		// Inject the authenticated user_id, tokenHash, csrfToken into the request context.
+		// Inject user_id, tokenHash, csrfToken into context for downstream handlers.
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
 		ctx = context.WithValue(ctx, tokenHashKey, tokenHash[:])
 		ctx = context.WithValue(ctx, csrfTokenKey, csrfToken)
 
-		// All good — pass the enriched context to the next handler.
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

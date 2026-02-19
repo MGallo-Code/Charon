@@ -1,3 +1,6 @@
+// middleware_test.go
+
+// unit tests for RequireAuth middleware.
 package auth
 
 import (
@@ -15,8 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// contextCapture records what RequireAuth injected into the request context.
-// Used to verify middleware correctly enriches the context for downstream handlers.
+// contextCapture records context values injected by RequireAuth for downstream assertion.
 type contextCapture struct {
 	called      bool
 	userID      uuid.UUID
@@ -27,7 +29,7 @@ type contextCapture struct {
 	csrfTokenOK bool
 }
 
-// capturingHandler returns an http.Handler that records context values then responds 200.
+// capturingHandler records context values then responds 200.
 func capturingHandler(cap *contextCapture) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cap.called = true
@@ -54,7 +56,7 @@ func sessionFixture() (cookie string, wantHash []byte, redisKey string) {
 	return
 }
 
-// addSessionCookie attaches an __Host-session cookie to the request.
+// addSessionCookie adds __Host-session cookie to request.
 func addSessionCookie(r *http.Request, value string) {
 	r.AddCookie(&http.Cookie{Name: "__Host-session", Value: value})
 }

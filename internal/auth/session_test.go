@@ -1,3 +1,6 @@
+// session_test.go
+// unit tests for GenerateToken, SetSessionCookie, and ClearSessionCookie.
+
 package auth
 
 import (
@@ -50,8 +53,7 @@ func TestSetSessionCookie(t *testing.T) {
 		SetSessionCookie(w, token, expiresAt)
 
 		// Extract cookie from recorded response
-		resp := w.Result()
-		cookies := resp.Cookies()
+		cookies := w.Result().Cookies()
 		if len(cookies) != 1 {
 			t.Fatalf("expected 1 cookie, got %d", len(cookies))
 		}
