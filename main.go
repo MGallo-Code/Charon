@@ -87,35 +87,9 @@ func run(cfg *config.Config) error {
 		RS: rs,
 	}
 
-	// Create new router
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
-
-	// Handle GET req to /health, respond ok
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
-	})
-	r.Post("/registerEmail", h.RegisterByEmail)
-	r.Post("/loginEmail", h.LoginByEmail)
-
-	// Authentication Required routes...
-	r.Group(func(r chi.Router) {
-		r.Use(h.RequireAuth)
-		// CSRF reads token injected by RequireAuth above
-		// DO NOT RUN CSRF BEFORE RequireAuth
-		r.Use(h.CSRFMiddleware)
-		r.Post("/logout", h.Logout)
-	})
-
 	// Create server (& format port)
 	addr := ":" + cfg.Port
-	server := &http.Server{Addr: addr, Handler: r}
+	server := &http.Server{Addr: addr, Handler: buildRouter(&h)}
 
 	// Session cleanup goroutine; removes sessions expired >7 days ago, runs every 24h.
 	// Cancelled via cleanupCtx when run() returns.
@@ -177,4 +151,35 @@ func run(cfg *config.Config) error {
 
 	slog.Info("server stopped")
 	return nil
+}
+
+// buildRouter wires all routes and middleware.
+// Called from run() for smoke tests.
+func buildRouter(h *auth.AuthHandler) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(30 * time.Second))
+
+	// Handle GET req to /health, respond ok
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+	r.Post("/registerEmail", h.RegisterByEmail)
+	r.Post("/loginEmail", h.LoginByEmail)
+
+	// Authentication Required routes
+	r.Group(func(r chi.Router) {
+		r.Use(h.RequireAuth)
+		// CSRF reads token injected by RequireAuth above
+		// DO NOT RUN CSRF BEFORE RequireAuth
+		r.Use(h.CSRFMiddleware)
+		r.Post("/logout", h.Logout)
+	})
+
+	return r
 }
