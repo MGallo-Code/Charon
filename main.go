@@ -34,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Show file, line, and function in every log entry at debug level, otherwise don't
+	// Include source location in log entries at debug level only.
 	addSrc := cfg.LogLevel == slog.LevelDebug
 
 	// Set up slog to output as json with configured level
@@ -43,15 +43,15 @@ func main() {
 		AddSource: addSrc,
 	})))
 
-	// Put main server running in a function so deferred calls actually run when we have to call os.Exit(1), then we can exit here
+	// run() is a separate func so deferred closes (ps, rs) always execute before os.Exit.
 	if err := run(cfg); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
 }
 
-// run contains all server logic. Returns error instead of os.Exit
-// so defers (ps.Close, rs.Close) always run.
+// run holds all server logic and returns error instead of calling os.Exit,
+// so deferred resource cleanup (ps.Close, rs.Close) always runs.
 func run(cfg *config.Config) error {
 	// Create a new context
 	ctx := context.Background()
@@ -117,8 +117,8 @@ func run(cfg *config.Config) error {
 	addr := ":" + cfg.Port
 	server := &http.Server{Addr: addr, Handler: r}
 
-	// Start session cleanup goroutine — deletes sessions expired >7 days ago, runs every 24h.
-	// cleanupCtx is cancelled when run() returns, stopping the goroutine cleanly on shutdown.
+	// Session cleanup goroutine; removes sessions expired >7 days ago, runs every 24h.
+	// Cancelled via cleanupCtx when run() returns.
 	cleanupCtx, cancelCleanup := context.WithCancel(ctx)
 	defer cancelCleanup()
 	go func() {
@@ -174,6 +174,7 @@ func run(cfg *config.Config) error {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
+
 	slog.Info("server stopped")
 	return nil
 }
