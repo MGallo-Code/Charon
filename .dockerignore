@@ -2,4 +2,7 @@
 .env
 .claude
 *.md
+
+# Testing
 *test.go
+internal/testutil
