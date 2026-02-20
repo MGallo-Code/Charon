@@ -1,14 +1,15 @@
 package auth
 
-// seam_test.go
+// wiring_test.go
 //
-// Catches bugs at the seams where middleware components hand data to each other.
+// Catches bugs where middleware components hand data to each other incorrectly.
 //
-// Send the same mockStore and mockSessionCache through both the handler and the middleware.
+// Shares the same mock store and cache through both handler and middleware to verify
+// the encoding contracts between them:
 //
-//   - Cookie:   LoginByEmail (Set cookies) -> RequireAuth (Check for/validate cookies)
-//   - CSRF:     LoginByEmail (Set cookies, CSRF Token) -> X-CSRF-Token -> CSRFMiddleware
-//   - Context:
+//   - Cookie:   LoginByEmail (set cookie) -> RequireAuth (validate cookie)
+//   - CSRF:     LoginByEmail (set CSRF token) -> X-CSRF-Token -> CSRFMiddleware
+//   - Context:  RequireAuth (inject context) -> Logout (read context)
 //
 
 import (
@@ -91,9 +92,9 @@ func getCSRFToken(t *testing.T, w *httptest.ResponseRecorder) string {
 
 // --- Seam tests ---
 
-// TestSeam_LoginCookieWorksWithRequireAuth verifies cookie encoding contract.
+// TestWiring_LoginCookieWorksWithRequireAuth verifies cookie encoding contract.
 
-func TestSeam_LoginCookieWorksWithRequireAuth(t *testing.T) {
+func TestWiring_LoginCookieWorksWithRequireAuth(t *testing.T) {
 	// Create new user
 	user, email := newUserWithPassword(t, "password123")
 	// Insert into store
@@ -129,8 +130,8 @@ func TestSeam_LoginCookieWorksWithRequireAuth(t *testing.T) {
 	}
 }
 
-// TestSeam_LoginCSRFTokenWorksWithCSRFMiddleware verifies the CSRF encoding contract.
-func TestSeam_LoginCSRFTokenWorksWithCSRFMiddleware(t *testing.T) {
+// TestWiring_LoginCSRFTokenWorksWithCSRFMiddleware verifies the CSRF encoding contract.
+func TestWiring_LoginCSRFTokenWorksWithCSRFMiddleware(t *testing.T) {
 	// Create new user
 	user, email := newUserWithPassword(t, "password123")
 	// Insert into store
@@ -162,12 +163,12 @@ func TestSeam_LoginCSRFTokenWorksWithCSRFMiddleware(t *testing.T) {
 	}
 }
 
-// TestSeam_WrongCSRFTokenIsRejected verifies the negative case of the CSRF contract.
+// TestWiring_WrongCSRFTokenIsRejected verifies the negative case of the CSRF contract.
 
 // A CSRF token from a different session should not pass validation for this session.
 // Uses two logins to produce two distinct sessions, then submits cookie from session 1
 // with the CSRF token from session 2.
-func TestSeam_WrongCSRFTokenIsRejected(t *testing.T) {
+func TestWiring_WrongCSRFTokenIsRejected(t *testing.T) {
 	// Create new usesr
 	user, email := newUserWithPassword(t, "password123")
 	// Create store, add user to it
@@ -198,9 +199,9 @@ func TestSeam_WrongCSRFTokenIsRejected(t *testing.T) {
 	}
 }
 
-// TestSeam_RequireAuthContextWorksWithLogout verifies the context injection contract.
+// TestWiring_RequireAuthContextWorksWithLogout verifies the context injection contract.
 
-func TestSeam_RequireAuthContextWorksWithLogout(t *testing.T) {
+func TestWiring_RequireAuthContextWorksWithLogout(t *testing.T) {
 	// Create new user
 	user, email := newUserWithPassword(t, "password123")
 	// Add user to new mock store
