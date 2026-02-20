@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/MGallo-Code/charon/internal/store"
+	"github.com/MGallo-Code/charon/internal/testutil"
 	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5"
 )
@@ -65,7 +66,7 @@ func addSessionCookie(r *http.Request, value string) {
 
 func TestRequireAuth(t *testing.T) {
 	t.Run("missing cookie returns Unauthorized", func(t *testing.T) {
-		h := &AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := &AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 		cap := &contextCapture{}
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -79,7 +80,7 @@ func TestRequireAuth(t *testing.T) {
 	})
 
 	t.Run("empty cookie value returns Unauthorized", func(t *testing.T) {
-		h := &AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := &AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 		cap := &contextCapture{}
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -94,7 +95,7 @@ func TestRequireAuth(t *testing.T) {
 	})
 
 	t.Run("invalid base64 cookie returns Unauthorized", func(t *testing.T) {
-		h := &AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := &AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 		cap := &contextCapture{}
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -113,8 +114,8 @@ func TestRequireAuth(t *testing.T) {
 		wantUserID := uuid.Must(uuid.NewV4())
 		wantCSRF := []byte("csrf-token-value")
 
-		mc := &mockSessionCache{
-			sessions: map[string]*store.CachedSession{
+		mc := &testutil.MockCache{
+			Sessions: map[string]*store.CachedSession{
 				redisKey: {
 					UserID:    wantUserID,
 					CSRFToken: wantCSRF,
@@ -122,7 +123,7 @@ func TestRequireAuth(t *testing.T) {
 				},
 			},
 		}
-		h := &AuthHandler{PS: &mockStore{}, RS: mc}
+		h := &AuthHandler{PS: &testutil.MockStore{}, RS: mc}
 		cap := &contextCapture{}
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -152,14 +153,16 @@ func TestRequireAuth(t *testing.T) {
 		wantUserID := uuid.Must(uuid.NewV4())
 		wantCSRF := []byte("csrf-token-value")
 
-		mc := &mockSessionCache{} // empty — forces Redis miss
-		ms := &mockStore{
-			getSessionByTokenHash: &store.Session{
-				ID:        uuid.Must(uuid.NewV4()),
-				UserID:    wantUserID,
-				TokenHash: wantHash,
-				CSRFToken: wantCSRF,
-				ExpiresAt: time.Now().Add(time.Hour),
+		mc := testutil.NewMockCache() // empty — forces Redis miss
+		ms := &testutil.MockStore{
+			Sessions: map[string]*store.Session{
+				string(wantHash): {
+					ID:        uuid.Must(uuid.NewV4()),
+					UserID:    wantUserID,
+					TokenHash: wantHash,
+					CSRFToken: wantCSRF,
+					ExpiresAt: time.Now().Add(time.Hour),
+				},
 			},
 		}
 		h := &AuthHandler{PS: ms, RS: mc}
@@ -186,7 +189,7 @@ func TestRequireAuth(t *testing.T) {
 			t.Errorf("csrfToken: expected %x, got %x (ok=%v)", wantCSRF, cap.csrfToken, cap.csrfTokenOK)
 		}
 		// Middleware should have repopulated Redis after falling back to Postgres.
-		if _, ok := mc.sessions[redisKey]; !ok {
+		if _, ok := mc.Sessions[redisKey]; !ok {
 			t.Error("expected Redis to be repopulated after Postgres fallback")
 		}
 	})
@@ -194,8 +197,8 @@ func TestRequireAuth(t *testing.T) {
 	t.Run("Redis miss Postgres ErrNoRows returns Unauthorized", func(t *testing.T) {
 		cookie, _, _ := sessionFixture()
 
-		mc := &mockSessionCache{} // empty — forces Redis miss
-		ms := &mockStore{getSessionErr: pgx.ErrNoRows}
+		mc := testutil.NewMockCache() // empty — forces Redis miss
+		ms := &testutil.MockStore{GetSessionErr: pgx.ErrNoRows}
 		h := &AuthHandler{PS: ms, RS: mc}
 		cap := &contextCapture{}
 		w := httptest.NewRecorder()
@@ -213,8 +216,8 @@ func TestRequireAuth(t *testing.T) {
 	t.Run("Redis miss Postgres error returns Unauthorized", func(t *testing.T) {
 		cookie, _, _ := sessionFixture()
 
-		mc := &mockSessionCache{} // empty — forces Redis miss
-		ms := &mockStore{getSessionErr: errors.New("database connection failed")}
+		mc := testutil.NewMockCache() // empty — forces Redis miss
+		ms := &testutil.MockStore{GetSessionErr: errors.New("database connection failed")}
 		h := &AuthHandler{PS: ms, RS: mc}
 		cap := &contextCapture{}
 		w := httptest.NewRecorder()
@@ -235,14 +238,16 @@ func TestRequireAuth(t *testing.T) {
 		wantCSRF := []byte("csrf-token-value")
 
 		// Redis miss + SetSession fails, but Postgres succeeds — request should still pass.
-		mc := &mockSessionCache{setSessionErr: errors.New("redis unavailable")}
-		ms := &mockStore{
-			getSessionByTokenHash: &store.Session{
-				ID:        uuid.Must(uuid.NewV4()),
-				UserID:    wantUserID,
-				TokenHash: wantHash,
-				CSRFToken: wantCSRF,
-				ExpiresAt: time.Now().Add(time.Hour),
+		mc := &testutil.MockCache{SetSessionErr: errors.New("redis unavailable")}
+		ms := &testutil.MockStore{
+			Sessions: map[string]*store.Session{
+				string(wantHash): {
+					ID:        uuid.Must(uuid.NewV4()),
+					UserID:    wantUserID,
+					TokenHash: wantHash,
+					CSRFToken: wantCSRF,
+					ExpiresAt: time.Now().Add(time.Hour),
+				},
 			},
 		}
 		h := &AuthHandler{PS: ms, RS: mc}

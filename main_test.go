@@ -8,106 +8,17 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/MGallo-Code/charon/internal/auth"
 	"github.com/MGallo-Code/charon/internal/store"
+	"github.com/MGallo-Code/charon/internal/testutil"
 	"github.com/gofrs/uuid/v5"
 )
-
-// --- Smoke mocks ---
-
-// smokeStore is a minimal, stateful mock of auth.Store.
-// Stores sessions in memory so login -> logout round-trips work without a real DB.
-type smokeStore struct {
-	mu       sync.Mutex
-	user     *store.User
-	sessions map[string]*store.Session // keyed by string(tokenHash)
-}
-
-func (m *smokeStore) CreateUserByEmail(_ context.Context, id uuid.UUID, email, passwordHash string) error {
-	return nil
-}
-
-func (m *smokeStore) GetUserByEmail(_ context.Context, email string) (*store.User, error) {
-	if m.user != nil && m.user.Email != nil && *m.user.Email == email {
-		return m.user, nil
-	}
-	return nil, errors.New("user not found")
-}
-
-func (m *smokeStore) CreateSession(_ context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sessions[string(tokenHash)] = &store.Session{
-		ID:        id,
-		UserID:    userID,
-		TokenHash: tokenHash,
-		CSRFToken: csrfToken,
-		ExpiresAt: expiresAt,
-	}
-	return nil
-}
-
-func (m *smokeStore) GetSessionByTokenHash(_ context.Context, tokenHash []byte) (*store.Session, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s, ok := m.sessions[string(tokenHash)]
-	if !ok {
-		return nil, errors.New("session not found")
-	}
-	return s, nil
-}
-
-func (m *smokeStore) DeleteSession(_ context.Context, tokenHash []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.sessions, string(tokenHash))
-	return nil
-}
-
-// smokeCache is a minimal, stateful mock of auth.SessionCache.
-// Acts as an in-memory Redis replacement for smoke tests.
-type smokeCache struct {
-	mu       sync.Mutex
-	sessions map[string]*store.CachedSession // keyed by base64 token hash
-}
-
-func (m *smokeCache) GetSession(_ context.Context, tokenHash string) (*store.CachedSession, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s, ok := m.sessions[tokenHash]
-	if !ok {
-		return nil, errors.New("cache miss")
-	}
-	return s, nil
-}
-
-func (m *smokeCache) SetSession(_ context.Context, tokenHash string, sessionData store.Session, ttl int) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sessions[tokenHash] = &store.CachedSession{
-		UserID:    sessionData.UserID,
-		CSRFToken: sessionData.CSRFToken,
-		ExpiresAt: sessionData.ExpiresAt,
-	}
-	return nil
-}
-
-func (m *smokeCache) DeleteSession(_ context.Context, tokenHash string, userID uuid.UUID) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.sessions, tokenHash)
-	return nil
-}
 
 // --- Helpers ---
 
@@ -122,18 +33,12 @@ func newSmokeHandler(t *testing.T) *auth.AuthHandler {
 		t.Fatalf("hashing test password: %v", err)
 	}
 	email := smokeEmail
-	ms := &smokeStore{
-		user: &store.User{
-			ID:           uuid.Must(uuid.NewV7()),
-			Email:        &email,
-			PasswordHash: hash,
-		},
-		sessions: make(map[string]*store.Session),
+	user := &store.User{
+		ID:           uuid.Must(uuid.NewV7()),
+		Email:        &email,
+		PasswordHash: hash,
 	}
-	mc := &smokeCache{
-		sessions: make(map[string]*store.CachedSession),
-	}
-	return &auth.AuthHandler{PS: ms, RS: mc}
+	return &auth.AuthHandler{PS: testutil.NewMockStore(user), RS: testutil.NewMockCache()}
 }
 
 // doSmokeLogin logs in with smokeEmail/smokePassword and returns the response.

@@ -6,56 +6,11 @@ package auth
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/MGallo-Code/charon/internal/store"
-	"github.com/gofrs/uuid/v5"
 )
-
-// mockSessionCache implements SessionCache for unit tests.
-type mockSessionCache struct {
-	sessions         map[string]*store.CachedSession
-	setSessionErr    error
-	deleteSessionErr error
-}
-
-// GetSession retrieves session by token hash.
-func (m *mockSessionCache) GetSession(_ context.Context, tokenHash string) (*store.CachedSession, error) {
-	s, ok := m.sessions[tokenHash]
-	if !ok {
-		return nil, fmt.Errorf("session not found")
-	}
-	return s, nil
-}
-
-// SetSession stores session in mock cache. Stateful for round-trip tests.
-func (m *mockSessionCache) SetSession(_ context.Context, tokenHash string, sessionData store.Session, ttl int) error {
-	if m.setSessionErr != nil {
-		return m.setSessionErr
-	}
-	if m.sessions == nil {
-		m.sessions = make(map[string]*store.CachedSession)
-	}
-	m.sessions[tokenHash] = &store.CachedSession{
-		UserID:    sessionData.UserID,
-		CSRFToken: sessionData.CSRFToken,
-		ExpiresAt: sessionData.ExpiresAt,
-	}
-	return nil
-}
-
-// DeleteSession removes session by token hash.
-func (m *mockSessionCache) DeleteSession(_ context.Context, tokenHash string, userID uuid.UUID) error {
-	if m.deleteSessionErr != nil {
-		return m.deleteSessionErr
-	}
-	delete(m.sessions, tokenHash)
-	return nil
-}
 
 // passHandler returns 200 when reached — proves middleware let request through.
 var passHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

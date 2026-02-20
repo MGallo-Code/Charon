@@ -13,52 +13,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/MGallo-Code/charon/internal/store"
+	"github.com/MGallo-Code/charon/internal/testutil"
 	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
-
-// --- Mocks ---
-
-// mockStore implements Store interface for handler unit tests.
-type mockStore struct {
-	createUserErr         error
-	getUserByEmail        *store.User
-	getUserErr            error
-	createSessionErr      error
-	getSessionByTokenHash *store.Session
-	getSessionErr         error
-	deleteSessionErr      error
-}
-
-func (m *mockStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, email, passwordHash string) error {
-	return m.createUserErr
-}
-
-func (m *mockStore) GetUserByEmail(ctx context.Context, email string) (*store.User, error) {
-	if m.getUserErr != nil {
-		return nil, m.getUserErr
-	}
-	return m.getUserByEmail, nil
-}
-
-func (m *mockStore) CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error {
-	return m.createSessionErr
-}
-
-func (m *mockStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*store.Session, error) {
-	if m.getSessionErr != nil {
-		return nil, m.getSessionErr
-	}
-	return m.getSessionByTokenHash, nil
-}
-
-func (m *mockStore) DeleteSession(ctx context.Context, tokenHash []byte) error {
-	return m.deleteSessionErr
-}
 
 // --- Helper Functions ---
 
@@ -180,7 +141,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("empty request body returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// no request
 		r := httptest.NewRequest(http.MethodPost, "/auth/register", nil)
@@ -195,7 +156,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("invalid JSON returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// invalid JSON
 		body := strings.NewReader(`{not valid json}`)
@@ -211,7 +172,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("missing email returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// pwd, no email
 		body := strings.NewReader(`{"password":"validpassword123"}`)
@@ -227,7 +188,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("email too short returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// email too short (< 5 chars)
 		body := strings.NewReader(`{"email":"a@b","password":"validpassword123"}`)
@@ -243,7 +204,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("email too long returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// email too long (> 254 chars)
 		longEmail := strings.Repeat("a", 250) + "@test.com" // 259 chars
@@ -260,7 +221,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("invalid email format returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// No @ sign — fails format check
 		body := strings.NewReader(`{"email":"notanemail","password":"validpassword123"}`)
@@ -276,7 +237,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("missing password returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// email, no pwd
 		body := strings.NewReader(`{"email":"test@email.com"}`)
@@ -292,7 +253,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("password too short returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// password too short (< 6 chars)
 		body := strings.NewReader(`{"email":"test@email.com","password":"short"}`)
@@ -308,7 +269,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("password too long returns BadRequest", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// password too long (> 128 chars)
 		longPassword := strings.Repeat("a", 129)
@@ -327,7 +288,7 @@ func TestRegisterByEmail(t *testing.T) {
 
 	t.Run("valid email and password returns Created", func(t *testing.T) {
 		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &mockStore{}}
+		h := AuthHandler{PS: &testutil.MockStore{}}
 
 		// Body w// valid email and password
 		body := strings.NewReader(`{"email":"valid@email.com","password":"validpassword123"}`)
@@ -347,7 +308,7 @@ func TestRegisterByEmail(t *testing.T) {
 		// Mock store that returns duplicate key error (Postgres 23505)
 		pgErr := &pgconn.PgError{Code: "23505"}
 		h := AuthHandler{
-			PS: &mockStore{createUserErr: fmt.Errorf("creating user by email: %w", pgErr)},
+			PS: &testutil.MockStore{CreateUserErr: fmt.Errorf("creating user by email: %w", pgErr)},
 		}
 
 		// Body w// valid email and password
@@ -365,7 +326,7 @@ func TestRegisterByEmail(t *testing.T) {
 	t.Run("generic database error returns InternalServerError", func(t *testing.T) {
 		// Mock store that returns generic database error
 		h := AuthHandler{
-			PS: &mockStore{createUserErr: errors.New("database connection failed")},
+			PS: &testutil.MockStore{CreateUserErr: errors.New("database connection failed")},
 		}
 
 		// Body w// valid email and password
@@ -397,7 +358,7 @@ func TestLoginByEmail(t *testing.T) {
 	// -- Input validation (400s) --
 
 	t.Run("empty request body returns BadRequest", func(t *testing.T) {
-		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 
 		r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 		w := httptest.NewRecorder()
@@ -408,7 +369,7 @@ func TestLoginByEmail(t *testing.T) {
 	})
 
 	t.Run("invalid JSON returns BadRequest", func(t *testing.T) {
-		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 
 		// Invalid JSON body
 		body := strings.NewReader(`{not valid json}`)
@@ -421,7 +382,7 @@ func TestLoginByEmail(t *testing.T) {
 	})
 
 	t.Run("missing email returns Unauthorized", func(t *testing.T) {
-		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 
 		body := strings.NewReader(`{"password":"password123"}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
@@ -433,7 +394,7 @@ func TestLoginByEmail(t *testing.T) {
 	})
 
 	t.Run("missing password returns Unauthorized", func(t *testing.T) {
-		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 
 		body := strings.NewReader(`{"email":"test@example.com"}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
@@ -448,8 +409,8 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("non-existent user returns Unauthorized", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{getUserErr: pgx.ErrNoRows},
-			RS: &mockSessionCache{},
+			PS: &testutil.MockStore{GetUserByEmailErr: pgx.ErrNoRows},
+			RS: testutil.NewMockCache(),
 		}
 
 		body := strings.NewReader(`{"email":"nonexistent@example.com","password":"password123"}`)
@@ -463,8 +424,8 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("wrong password returns Unauthorized", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{getUserByEmail: testUser},
-			RS: &mockSessionCache{},
+			PS: testutil.NewMockStore(testUser),
+			RS: testutil.NewMockCache(),
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"wrongpassword"}`)
@@ -480,8 +441,8 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("database error when fetching user returns Unauthorized", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{getUserErr: errors.New("database connection failed")},
-			RS: &mockSessionCache{},
+			PS: &testutil.MockStore{GetUserByEmailErr: errors.New("database connection failed")},
+			RS: testutil.NewMockCache(),
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -503,8 +464,8 @@ func TestLoginByEmail(t *testing.T) {
 			PasswordHash: "not-a-valid-argon2id-hash",
 		}
 		h := AuthHandler{
-			PS: &mockStore{getUserByEmail: badUser},
-			RS: &mockSessionCache{},
+			PS: testutil.NewMockStore(badUser),
+			RS: testutil.NewMockCache(),
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -517,12 +478,11 @@ func TestLoginByEmail(t *testing.T) {
 	})
 
 	t.Run("session creation failure returns InternalServerError", func(t *testing.T) {
+		ps := testutil.NewMockStore(testUser)
+		ps.CreateSessionErr = errors.New("database write failed")
 		h := AuthHandler{
-			PS: &mockStore{
-				getUserByEmail:   testUser,
-				createSessionErr: errors.New("database write failed"),
-			},
-			RS: &mockSessionCache{},
+			PS: ps,
+			RS: testutil.NewMockCache(),
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -538,8 +498,8 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("valid credentials returns OK with user_id and csrf_token", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{getUserByEmail: testUser},
-			RS: &mockSessionCache{},
+			PS: testutil.NewMockStore(testUser),
+			RS: testutil.NewMockCache(),
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -554,8 +514,8 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("valid credentials with remember_me sets extended TTL", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{getUserByEmail: testUser},
-			RS: &mockSessionCache{},
+			PS: testutil.NewMockStore(testUser),
+			RS: testutil.NewMockCache(),
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123","remember_me":true}`)
@@ -584,8 +544,8 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("valid credentials without remember_me sets default TTL", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{getUserByEmail: testUser},
-			RS: &mockSessionCache{},
+			PS: testutil.NewMockStore(testUser),
+			RS: testutil.NewMockCache(),
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -648,7 +608,7 @@ func TestLogout(t *testing.T) {
 	// -- Missing context values (500s) --
 
 	t.Run("missing userID in context returns InternalServerError", func(t *testing.T) {
-		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 
 		// No context values — simulates Logout called without RequireAuth.
 		r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
@@ -660,7 +620,7 @@ func TestLogout(t *testing.T) {
 	})
 
 	t.Run("missing tokenHash in context returns InternalServerError", func(t *testing.T) {
-		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 
 		// userID present but tokenHash missing
 		r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
@@ -676,8 +636,8 @@ func TestLogout(t *testing.T) {
 
 	t.Run("Postgres delete failure returns InternalServerError", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{deleteSessionErr: errors.New("database write failed")},
-			RS: &mockSessionCache{},
+			PS: &testutil.MockStore{DeleteSessionErr: errors.New("database write failed")},
+			RS: testutil.NewMockCache(),
 		}
 
 		r := requestWithSession(testUserID, testTokenHash)
@@ -692,8 +652,8 @@ func TestLogout(t *testing.T) {
 
 	t.Run("Redis delete failure still returns OK", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &mockStore{},
-			RS: &mockSessionCache{deleteSessionErr: errors.New("redis unavailable")},
+			PS: &testutil.MockStore{},
+			RS: &testutil.MockCache{DeleteSessionErr: errors.New("redis unavailable")},
 		}
 
 		r := requestWithSession(testUserID, testTokenHash)
@@ -709,7 +669,7 @@ func TestLogout(t *testing.T) {
 	// -- Happy path --
 
 	t.Run("valid session returns OK and clears cookie", func(t *testing.T) {
-		h := AuthHandler{PS: &mockStore{}, RS: &mockSessionCache{}}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
 
 		r := requestWithSession(testUserID, testTokenHash)
 		w := httptest.NewRecorder()

@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/MGallo-Code/charon/internal/store"
+	"github.com/MGallo-Code/charon/internal/testutil"
 	"github.com/gofrs/uuid/v5"
 )
 
@@ -96,9 +97,9 @@ func TestSeam_LoginCookieWorksWithRequireAuth(t *testing.T) {
 	// Create new user
 	user, email := newUserWithPassword(t, "password123")
 	// Insert into store
-	ms := &mockStore{getUserByEmail: user}
+	ms := testutil.NewMockStore(user)
 	// Create cache
-	mc := &mockSessionCache{}
+	mc := testutil.NewMockCache()
 	// Create handler
 	h := &AuthHandler{PS: ms, RS: mc}
 
@@ -133,9 +134,9 @@ func TestSeam_LoginCSRFTokenWorksWithCSRFMiddleware(t *testing.T) {
 	// Create new user
 	user, email := newUserWithPassword(t, "password123")
 	// Insert into store
-	ms := &mockStore{getUserByEmail: user}
+	ms := testutil.NewMockStore(user)
 	// Create cache
-	mc := &mockSessionCache{}
+	mc := testutil.NewMockCache()
 	// Create hander
 	h := &AuthHandler{PS: ms, RS: mc}
 
@@ -170,8 +171,8 @@ func TestSeam_WrongCSRFTokenIsRejected(t *testing.T) {
 	// Create new usesr
 	user, email := newUserWithPassword(t, "password123")
 	// Create store, add user to it
-	ms := &mockStore{getUserByEmail: user}
-	mc := &mockSessionCache{}
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
 	// Create handler
 	h := &AuthHandler{PS: ms, RS: mc}
 
@@ -203,8 +204,8 @@ func TestSeam_RequireAuthContextWorksWithLogout(t *testing.T) {
 	// Create new user
 	user, email := newUserWithPassword(t, "password123")
 	// Add user to new mock store
-	ms := &mockStore{getUserByEmail: user}
-	mc := &mockSessionCache{}
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
 	// Create handler
 	h := &AuthHandler{PS: ms, RS: mc}
 
@@ -213,8 +214,8 @@ func TestSeam_RequireAuthContextWorksWithLogout(t *testing.T) {
 	cookie := getSessionCookie(t, loginW)
 
 	// Ensure 1 session stored
-	if len(mc.sessions) != 1 {
-		t.Fatalf("expected 1 session in cache after login, got %d", len(mc.sessions))
+	if len(mc.Sessions) != 1 {
+		t.Fatalf("expected 1 session in cache after login, got %d", len(mc.Sessions))
 	}
 
 	// Logout
@@ -229,7 +230,7 @@ func TestSeam_RequireAuthContextWorksWithLogout(t *testing.T) {
 	}
 
 	// Session must be gone from the cache, proves Logout computed the same Redis key as Login.
-	if len(mc.sessions) != 0 {
-		t.Errorf("session still in cache after logout (token hash encoding mismatch between Login and Logout?): %d remaining", len(mc.sessions))
+	if len(mc.Sessions) != 0 {
+		t.Errorf("session still in cache after logout (token hash encoding mismatch between Login and Logout?): %d remaining", len(mc.Sessions))
 	}
 }
