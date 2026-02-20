@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,8 +44,12 @@ func main() {
 		AddSource: addSrc,
 	})))
 
+	// Cancel ctx on SIGINT/SIGTERM; run() shuts down when ctx is done.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// run() is a separate func so deferred closes (ps, rs) always execute before os.Exit.
-	if err := run(cfg); err != nil {
+	if err := run(ctx, cfg, nil); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
@@ -52,10 +57,9 @@ func main() {
 
 // run holds all server logic and returns error instead of calling os.Exit,
 // so deferred resource cleanup (ps.Close, rs.Close) always runs.
-func run(cfg *config.Config) error {
-	// Create a new context
-	ctx := context.Background()
-
+// Shuts down when ctx is cancelled (signal handling is the caller's concern).
+// If ready is non-nil, the server's base URL is sent on it once the listener is bound.
+func run(ctx context.Context, cfg *config.Config, ready chan<- string) error {
 	// Create new postgres store, return errors if any
 	ps, err := store.NewPostgresStore(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -82,14 +86,15 @@ func run(cfg *config.Config) error {
 	defer rs.Close()
 
 	// Create AuthHandler
-	h := auth.AuthHandler{
-		PS: ps,
-		RS: rs,
+	h := auth.AuthHandler{PS: ps, RS: rs}
+
+	// Bind listener; ":0" picks a free port (useful in tests).
+	ln, err := net.Listen("tcp", ":"+cfg.Port)
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
 	}
 
-	// Create server (& format port)
-	addr := ":" + cfg.Port
-	server := &http.Server{Addr: addr, Handler: buildRouter(&h)}
+	server := &http.Server{Handler: buildRouter(&h)}
 
 	// Session cleanup goroutine; removes sessions expired >7 days ago, runs every 24h.
 	// Cancelled via cleanupCtx when run() returns.
@@ -114,26 +119,26 @@ func run(cfg *config.Config) error {
 		}
 	}()
 
-	// Start server in a goroutine, run() func continues past this
+	// Start server in a goroutine; run() continues past this.
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("charon listening", "addr", addr)
-		// If server closes for reason other than user stopping server, send err to channel
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		slog.Info("charon listening", "addr", ln.Addr().String())
+		// Send error only if server stops for a reason other than explicit shutdown.
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
 
-	// Channel listens to os.Signal values...holds 1 signal
-	quit := make(chan os.Signal, 1)
-	// Tell go when program told to terminate -> send signal to quit chan instead of instantly killing proc
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// Signal readiness to caller (used by tests; nil in production).
+	if ready != nil {
+		ready <- "http://" + ln.Addr().String()
+	}
 
-	// Wait for server error (server never started) or shutdown signal
+	// Wait for server error or shutdown signal from ctx.
 	select {
 	case err := <-errCh:
 		return fmt.Errorf("server error: %w", err)
-	case <-quit:
+	case <-ctx.Done():
 	}
 
 	// Graceful shutdown ! :)
@@ -141,10 +146,10 @@ func run(cfg *config.Config) error {
 	// Create context with 30s timeout, defer the cancel function to release the context's resources
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// server.Shutdown
+	// server.Shutdown:
 	//  1. Stops accepting new conns
-	//  2. Waits for all in-progress requests to finish their handlers and get responses sent
-	//  3. Returnn nil when done or an error if the shutdown context's 30s hits first
+	//  2. Waits for all in-progress requests to finish and responses to be sent
+	//  3. Returnn nil when done or an error if the 30s timeout hits first
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
