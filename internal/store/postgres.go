@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -114,17 +115,20 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 
 // UpdateUserPassword replaces the stored Argon2id hash for the given user.
 // Caller is responsible for hashing the new password before calling.
+// Returns pgx.ErrNoRows if no user exists with that ID.
 func (s *PostgresStore) UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
-	_, err := s.pool.Exec(ctx, `
+	result, err := s.pool.Exec(ctx, `
 		UPDATE users
 		SET
 			password_hash = $2,
 			updated_at = NOW()
 		WHERE id = $1
 	`, id, passwordHash)
-	// report any errs
 	if err != nil {
-		return fmt.Errorf("updating user: %w", err)
+		return fmt.Errorf("updating user password: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("updating user password: %w", pgx.ErrNoRows)
 	}
 	return nil
 }
