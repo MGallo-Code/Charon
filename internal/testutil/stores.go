@@ -21,12 +21,13 @@ import (
 // Use NewMockStore to seed users; or construct directly and set *Err fields for error-path tests.
 type MockStore struct {
 	// Error injection...zero value means no error
-	CreateUserErr      error
-	GetUserByEmailErr  error
-	CreateSessionErr   error
-	GetSessionErr      error
-	DeleteSessionErr   error
-	DeleteAllSessionsErr error
+	CreateUserErr         error
+	GetUserByEmailErr     error
+	CreateSessionErr      error
+	GetSessionErr         error
+	UpdateUserPasswordErr error
+	DeleteSessionErr      error
+	DeleteAllSessionsErr  error
 
 	Users    map[string]*store.User    // keyed by email
 	Sessions map[string]*store.Session // keyed by string(tokenHash)
@@ -63,6 +64,29 @@ func (m *MockStore) GetUserByEmail(_ context.Context, email string) (*store.User
 		return nil, errors.New("user not found")
 	}
 	return u, nil
+}
+
+func (m *MockStore) UpdateUserPassword(_ context.Context, id uuid.UUID, passwordHash string) error {
+	if m.UpdateUserPasswordErr != nil {
+		return m.UpdateUserPasswordErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Get user by id
+	var u *store.User
+	for _, user := range m.Users {
+		if user.ID == id {
+			u = user
+			break
+		}
+	}
+	// Check user find success
+	if u == nil {
+		return errors.New("user not found")
+	}
+	// Update pwd
+	u.PasswordHash = passwordHash
+	return nil
 }
 
 func (m *MockStore) CreateSession(_ context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error {

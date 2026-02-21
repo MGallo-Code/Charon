@@ -42,6 +42,9 @@ type Store interface {
 	// GetUserByEmail fetches user by email for login verification.
 	GetUserByEmail(ctx context.Context, email string) (*store.User, error)
 
+	// UpdateUserPassword attempts to update the password of user attached to given id.
+	UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error
+
 	// CreateSession inserts new session row with token hash and CSRF token.
 	CreateSession(ctx context.Context, id uuid.UUID, userID uuid.UUID, tokenHash []byte, csrfToken []byte, expiresAt time.Time, ip *string, userAgent *string) error
 
