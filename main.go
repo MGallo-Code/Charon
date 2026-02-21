@@ -184,6 +184,7 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 		// DO NOT RUN CSRF BEFORE RequireAuth
 		r.Use(h.CSRFMiddleware)
 		r.Post("/logout", h.Logout)
+		r.Post("/logout-all", h.LogoutAll)
 	})
 
 	return r
