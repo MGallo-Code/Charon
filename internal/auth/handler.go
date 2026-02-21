@@ -28,6 +28,9 @@ type SessionCache interface {
 
 	// DeleteSession removes session and its entry in the user tracking set.
 	DeleteSession(ctx context.Context, tokenHash string, userID uuid.UUID) error
+
+	// DeleteAllUserSessions removes all cached sessions for a user.
+	DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error
 }
 
 // Store defines database operations needed by auth handlers.
@@ -48,6 +51,9 @@ type Store interface {
 
 	// DeleteSession removes single session row by token hash.
 	DeleteSession(ctx context.Context, tokenHash []byte) error
+
+	// DeleteAllUserSessions removes all sessions for a user.
+	DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error
 }
 
 // dummyPasswordHash is a precomputed Argon2id hash for timing attack mitigation.
@@ -253,6 +259,34 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		"csrf_token": csrfTokenEncoded,
 	})
 	w.Write(resp)
+}
+
+// LogoutAll handles POST /logout-all — ends every session for the authenticated user.
+// Deletes all sessions from Redis (non-fatal) then Postgres (fatal), clears cookie.
+func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		logError(r, "logout-all called without user_id in context")
+		InternalServerError(w, r, errors.New("missing session context"))
+		return
+	}
+
+	if err := h.RS.DeleteAllUserSessions(r.Context(), userID); err != nil {
+		logWarn(r, "failed to delete all sessions from redis", "error", err)
+	}
+
+	if err := h.PS.DeleteAllUserSessions(r.Context(), userID); err != nil {
+		logError(r, "failed to delete all sessions from database", "error", err)
+		InternalServerError(w, r, err)
+		return
+	}
+
+	ClearSessionCookie(w)
+	logInfo(r, "user logged out of all devices", "user_id", userID)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message":"logged out of all devices"}`))
 }
 
 // Logout handles POST /logout — ends authenticated session.

@@ -21,11 +21,12 @@ import (
 // Use NewMockStore to seed users; or construct directly and set *Err fields for error-path tests.
 type MockStore struct {
 	// Error injection...zero value means no error
-	CreateUserErr     error
-	GetUserByEmailErr error
-	CreateSessionErr  error
-	GetSessionErr     error
-	DeleteSessionErr  error
+	CreateUserErr      error
+	GetUserByEmailErr  error
+	CreateSessionErr   error
+	GetSessionErr      error
+	DeleteSessionErr   error
+	DeleteAllSessionsErr error
 
 	Users    map[string]*store.User    // keyed by email
 	Sessions map[string]*store.Session // keyed by string(tokenHash)
@@ -106,13 +107,28 @@ func (m *MockStore) DeleteSession(_ context.Context, tokenHash []byte) error {
 	return nil
 }
 
+func (m *MockStore) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) error {
+	if m.DeleteAllSessionsErr != nil {
+		return m.DeleteAllSessionsErr
+	}
+	m.mu.Lock()
+	for key, s := range m.Sessions {
+		if s.UserID == userID {
+			delete(m.Sessions, key)
+		}
+	}
+	m.mu.Unlock()
+	return nil
+}
+
 // MockCache implements auth.SessionCache for tests.
 // Always stateful...Sessions is a map, like a real cache.
 // Use *Err fields to inject errors for specific operations.
 type MockCache struct {
 	// Error injection...zero value means no error
-	SetSessionErr    error
-	DeleteSessionErr error
+	SetSessionErr        error
+	DeleteSessionErr     error
+	DeleteAllSessionsErr error
 
 	Sessions map[string]*store.CachedSession // keyed by base64 token hash
 
@@ -160,5 +176,19 @@ func (m *MockCache) DeleteSession(_ context.Context, tokenHash string, userID uu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.Sessions, tokenHash)
+	return nil
+}
+
+func (m *MockCache) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) error {
+	if m.DeleteAllSessionsErr != nil {
+		return m.DeleteAllSessionsErr
+	}
+	m.mu.Lock()
+	for key, s := range m.Sessions {
+		if s.UserID == userID {
+			delete(m.Sessions, key)
+		}
+	}
+	m.mu.Unlock()
 	return nil
 }
