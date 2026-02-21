@@ -106,18 +106,8 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate password — min 6, max 128 to prevent DoS via Argon2id.
-	if registerInput.Password == "" {
-		BadRequest(w, r, "No password provided!")
-		return
-	}
-	pwdLen := len(registerInput.Password)
-	if pwdLen < 6 {
-		BadRequest(w, r, "Password too short!")
-		return
-	}
-	if pwdLen > 128 {
-		BadRequest(w, r, "Password too long!")
+	if invalidMsg := ValidatePassword(registerInput.Password); invalidMsg != "" {
+		BadRequest(w, r, invalidMsg)
 		return
 	}
 

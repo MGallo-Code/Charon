@@ -88,3 +88,19 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 	// Compare pwds w/ constant time for timing attacks
 	return subtle.ConstantTimeCompare(hash, expectedHash) == 1, nil
 }
+
+// ValidatePassword validates passwords to ensure they meet specific standards
+func ValidatePassword(password string) string {
+	// Validate password — min 6, max 128 to prevent DoS via Argon2id.
+	if password == "" {
+		return "No password provided!"
+	}
+	pwdLen := len(password)
+	if pwdLen < 6 {
+		return "Password too short!"
+	}
+	if pwdLen > 128 {
+		return "Password too long!"
+	}
+	return ""
+}
