@@ -262,7 +262,6 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	userID, ok := UserIDFromContext(r.Context())
 	if !ok {
-		logError(r, "logout-all called without user_id in context")
 		InternalServerError(w, r, errors.New("missing session context"))
 		return
 	}
@@ -297,7 +296,6 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	tokenHash, ok := TokenHashFromContext(r.Context())
 	if !ok {
-		logError(r, "logout called without token_hash in context")
 		InternalServerError(w, r, errors.New("missing session context"))
 		return
 	}
@@ -320,4 +318,92 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"message":"logged out"}`))
+}
+
+// PasswordChange handles POST /password/change...updates the authenticated user's password.
+// Verifies current password, re-hashes the new one, then invalidates all sessions.
+// Returns 200 on success, 400 for invalid input, 401 for wrong current password, 500 for server errors.
+func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
+	// Decode request body, expect current_password and new_password
+	var pwdChangeInput struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&pwdChangeInput); err != nil {
+		logWarn(r, "failed to decode password change input", "error", err)
+		BadRequest(w, r, "error decoding request body")
+		return
+	}
+
+	if pwdChangeInput.CurrentPassword == "" {
+		BadRequest(w, r, "current_password required")
+		return
+	}
+
+	// Validate new pwd
+	if invalidMsg := ValidatePassword(pwdChangeInput.NewPassword); invalidMsg != "" {
+		BadRequest(w, r, invalidMsg)
+		return
+	}
+
+	// Pull user_id from context
+	id, ok := UserIDFromContext(r.Context())
+	if !ok {
+		InternalServerError(w, r, errors.New("missing session context"))
+		return
+	}
+
+	// Fetch user by ID to get their stored password hash.
+	user, err := h.PS.GetUserByID(r.Context(), id)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+	passwordHash := user.PasswordHash
+
+	// Verify current_password against the stored hash.
+	pwdMatch, err := VerifyPassword(pwdChangeInput.CurrentPassword, passwordHash)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	} else if !pwdMatch {
+		Unauthorized(w, r, "invalid credentials")
+		return
+	}
+
+	// Hash new_password with HashPassword.
+	newPassword, err := HashPassword(pwdChangeInput.NewPassword)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Update the hash in Postgres with UpdateUserPassword.
+	err = h.PS.UpdateUserPassword(r.Context(), id, newPassword)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Delete all sessions from Redis (non-fatal, log warn on error).
+	err = h.RS.DeleteAllUserSessions(r.Context(), id)
+	if err != nil {
+		logWarn(r, "failed to delete all sessions from redis", "error", err)
+	}
+
+	// Delete all sessions from Postgres (fatal, return 500 on error).
+	err = h.PS.DeleteAllUserSessions(r.Context(), id)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Clear the session cookie; current session is now invalid.
+	ClearSessionCookie(w)
+
+	// Log success and return 200
+	logInfo(r, "user changed password", "user_id", id)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message": "password updated"}`))
 }
