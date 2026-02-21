@@ -42,6 +42,9 @@ type Store interface {
 	// GetUserByEmail fetches user by email for login verification.
 	GetUserByEmail(ctx context.Context, email string) (*store.User, error)
 
+	// GetUserByID fetches user by UUID. Used when user_id is in context but email is not.
+	GetUserByID(ctx context.Context, id uuid.UUID) (*store.User, error)
+
 	// UpdateUserPassword attempts to update the password of user attached to given id.
 	UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error
 
