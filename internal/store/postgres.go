@@ -112,6 +112,23 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 	return user, nil
 }
 
+// UpdateUserPassword replaces the stored Argon2id hash for the given user.
+// Caller is responsible for hashing the new password before calling.
+func (s *PostgresStore) UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE users
+		SET
+			password_hash = $2,
+			updated_at = NOW()
+		WHERE id = $1
+	`, id, passwordHash)
+	// report any errs
+	if err != nil {
+		return fmt.Errorf("updating user: %w", err)
+	}
+	return nil
+}
+
 // CreateSession inserts new session row.
 // Caller generates UUID v7, SHA-256 token hash, and expiresAt before calling.
 // ip and userAgent are optional - pass nil to omit.
