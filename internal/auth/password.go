@@ -89,7 +89,7 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 	return subtle.ConstantTimeCompare(hash, expectedHash) == 1, nil
 }
 
-// ValidatePassword validates passwords to ensure they meet specific standards
+// ValidatePassword checks length constraints; returns error message or empty string.
 func ValidatePassword(password string) string {
 	// Validate password — min 6, max 128 to prevent DoS via Argon2id.
 	if password == "" {
