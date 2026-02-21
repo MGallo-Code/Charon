@@ -199,6 +199,39 @@ func TestWiring_WrongCSRFTokenIsRejected(t *testing.T) {
 	}
 }
 
+// TestWiring_RequireAuthContextWorksWithLogoutAll verifies logout-all clears all sessions via context.
+// Two logins produce two sessions; logout-all via either session must wipe both.
+func TestWiring_RequireAuthContextWorksWithLogoutAll(t *testing.T) {
+	user, email := newUserWithPassword(t, "password123")
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
+	h := &AuthHandler{PS: ms, RS: mc}
+
+	// Two logins — two sessions for the same user.
+	doLogin(t, h, email, "password123")
+	loginW := doLogin(t, h, email, "password123")
+	cookie := getSessionCookie(t, loginW)
+
+	if len(mc.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions in cache after two logins, got %d", len(mc.Sessions))
+	}
+
+	// LogoutAll using the second session's cookie.
+	r := httptest.NewRequest(http.MethodPost, "/logout-all", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.RequireAuth(http.HandlerFunc(h.LogoutAll)).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("logout-all: expected 200, got %d", w.Code)
+	}
+
+	// All sessions must be gone.
+	if len(mc.Sessions) != 0 {
+		t.Errorf("expected 0 sessions after logout-all, got %d remaining", len(mc.Sessions))
+	}
+}
+
 // TestWiring_RequireAuthContextWorksWithLogout verifies the context injection contract.
 
 func TestWiring_RequireAuthContextWorksWithLogout(t *testing.T) {

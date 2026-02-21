@@ -178,6 +178,83 @@ func TestE2E_Register_And_Login(t *testing.T) {
 	}
 }
 
+// TestE2E_FullRoundTrip_LogoutAll verifies register -> login -> logout-all against real Postgres + Redis.
+func TestE2E_FullRoundTrip_LogoutAll(t *testing.T) {
+	skipIfNoE2E(t)
+
+	email := fmt.Sprintf("e2e-loa-%d@example.com", time.Now().UnixNano())
+	password := "logoutalldebug1"
+
+	// Step 1: Register
+	regResp, err := http.Post(e2eServerURL+"/registerEmail", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
+	if err != nil {
+		t.Fatalf("POST /registerEmail: %v", err)
+	}
+	regResp.Body.Close()
+	if regResp.StatusCode != http.StatusCreated {
+		t.Fatalf("register: expected 201, got %d", regResp.StatusCode)
+	}
+
+	// Step 2: Login -- capture session cookie and CSRF token
+	loginResp, err := http.Post(e2eServerURL+"/loginEmail", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
+	if err != nil {
+		t.Fatalf("POST /loginEmail: %v", err)
+	}
+	var cookieValue string
+	for _, c := range loginResp.Cookies() {
+		if c.Name == "__Host-session" {
+			cookieValue = c.Value
+			break
+		}
+	}
+	if cookieValue == "" {
+		loginResp.Body.Close()
+		t.Fatal("no session cookie from login")
+	}
+	var loginBody struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(loginResp.Body).Decode(&loginBody); err != nil {
+		loginResp.Body.Close()
+		t.Fatalf("decoding login response: %v", err)
+	}
+	loginResp.Body.Close()
+	if loginBody.CSRFToken == "" {
+		t.Fatal("no csrf_token from login")
+	}
+
+	// Step 3: LogoutAll -- pass session cookie and CSRF token
+	req, err := http.NewRequest(http.MethodPost, e2eServerURL+"/logout-all", nil)
+	if err != nil {
+		t.Fatalf("building logout-all request: %v", err)
+	}
+	req.Header.Set("Cookie", "__Host-session="+cookieValue)
+	req.Header.Set("X-CSRF-Token", loginBody.CSRFToken)
+
+	logoutAllResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /logout-all: %v", err)
+	}
+	defer logoutAllResp.Body.Close()
+
+	if logoutAllResp.StatusCode != http.StatusOK {
+		t.Errorf("logout-all: expected 200, got %d", logoutAllResp.StatusCode)
+	}
+
+	// Session cookie must be cleared
+	for _, c := range logoutAllResp.Cookies() {
+		if c.Name == "__Host-session" {
+			if c.MaxAge != -1 {
+				t.Errorf("cookie MaxAge: expected -1 (cleared), got %d", c.MaxAge)
+			}
+			return
+		}
+	}
+	t.Error("__Host-session not found in logout-all response")
+}
+
 // TestE2E_FullRoundTrip verifies register -> login -> logout against real Postgres + Redis.
 func TestE2E_FullRoundTrip(t *testing.T) {
 	skipIfNoE2E(t)

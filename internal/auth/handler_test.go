@@ -601,6 +601,75 @@ func assertClearedSessionCookie(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Error("__Host-session cookie not found in response")
 }
 
+func TestLogoutAll(t *testing.T) {
+	testUserID := uuid.Must(uuid.NewV7())
+	testTokenHash := []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") // 32 bytes
+
+	// -- Missing context values (500s) --
+
+	t.Run("missing userID in context returns InternalServerError", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		// No context values — simulates LogoutAll called without RequireAuth.
+		r := httptest.NewRequest(http.MethodPost, "/logout-all", nil)
+		w := httptest.NewRecorder()
+
+		h.LogoutAll(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	// -- Store errors (500s) --
+
+	t.Run("Postgres delete failure returns InternalServerError", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &testutil.MockStore{DeleteAllSessionsErr: errors.New("database write failed")},
+			RS: testutil.NewMockCache(),
+		}
+
+		r := requestWithSession(testUserID, testTokenHash)
+		w := httptest.NewRecorder()
+
+		h.LogoutAll(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	// -- Non-fatal failures --
+
+	t.Run("Redis delete failure still returns OK", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &testutil.MockStore{},
+			RS: &testutil.MockCache{DeleteAllSessionsErr: errors.New("redis unavailable")},
+		}
+
+		r := requestWithSession(testUserID, testTokenHash)
+		w := httptest.NewRecorder()
+
+		h.LogoutAll(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+	})
+
+	// -- Happy path --
+
+	t.Run("valid session returns OK and clears cookie", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := requestWithSession(testUserID, testTokenHash)
+		w := httptest.NewRecorder()
+
+		h.LogoutAll(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+		assertClearedSessionCookie(t, w)
+	})
+}
+
 func TestLogout(t *testing.T) {
 	testUserID := uuid.Must(uuid.NewV7())
 	testTokenHash := []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") // 32 bytes

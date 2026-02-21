@@ -180,6 +180,120 @@ func TestSmoke_Logout_WithSessionButNoCSRF(t *testing.T) {
 	}
 }
 
+// TestSmoke_LogoutAll_WithoutSession verifies /logout-all rejects unauthenticated requests.
+func TestSmoke_LogoutAll_WithoutSession(t *testing.T) {
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/logout-all", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /logout-all: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status: expected 401, got %d", resp.StatusCode)
+	}
+}
+
+// TestSmoke_LogoutAll_WithSessionButNoCSRF verifies CSRFMiddleware is wired to /logout-all.
+func TestSmoke_LogoutAll_WithSessionButNoCSRF(t *testing.T) {
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	defer srv.Close()
+
+	loginResp := doSmokeLogin(t, srv.URL)
+	var cookieValue string
+	for _, c := range loginResp.Cookies() {
+		if c.Name == "__Host-session" {
+			cookieValue = c.Value
+			break
+		}
+	}
+	loginResp.Body.Close()
+	if cookieValue == "" {
+		t.Fatal("no session cookie from login")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/logout-all", nil)
+	if err != nil {
+		t.Fatalf("building logout-all request: %v", err)
+	}
+	req.Header.Set("Cookie", "__Host-session="+cookieValue)
+	// Intentionally omitting X-CSRF-Token
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /logout-all: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status: expected 403, got %d", resp.StatusCode)
+	}
+}
+
+// TestSmoke_FullRoundTrip_LogoutAll verifies login -> logout-all over real HTTP.
+func TestSmoke_FullRoundTrip_LogoutAll(t *testing.T) {
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	defer srv.Close()
+
+	// Step 1: Login -- capture session cookie and CSRF token
+	loginResp := doSmokeLogin(t, srv.URL)
+
+	var cookieValue string
+	for _, c := range loginResp.Cookies() {
+		if c.Name == "__Host-session" {
+			cookieValue = c.Value
+			break
+		}
+	}
+	if cookieValue == "" {
+		loginResp.Body.Close()
+		t.Fatal("no session cookie from login")
+	}
+
+	var loginBody struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(loginResp.Body).Decode(&loginBody); err != nil {
+		loginResp.Body.Close()
+		t.Fatalf("decoding login response: %v", err)
+	}
+	loginResp.Body.Close()
+	if loginBody.CSRFToken == "" {
+		t.Fatal("no csrf_token from login")
+	}
+
+	// Step 2: LogoutAll -- pass session cookie and CSRF token
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/logout-all", nil)
+	if err != nil {
+		t.Fatalf("building logout-all request: %v", err)
+	}
+	req.Header.Set("Cookie", "__Host-session="+cookieValue)
+	req.Header.Set("X-CSRF-Token", loginBody.CSRFToken)
+
+	logoutAllResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /logout-all: %v", err)
+	}
+	defer logoutAllResp.Body.Close()
+
+	if logoutAllResp.StatusCode != http.StatusOK {
+		t.Errorf("logout-all: expected 200, got %d", logoutAllResp.StatusCode)
+	}
+
+	// Step 3: Session cookie must be cleared in response
+	for _, c := range logoutAllResp.Cookies() {
+		if c.Name == "__Host-session" {
+			if c.MaxAge != -1 {
+				t.Errorf("cookie MaxAge: expected -1 (cleared), got %d", c.MaxAge)
+			}
+			return
+		}
+	}
+	t.Error("__Host-session not found in logout-all response")
+}
+
 // TestSmoke_FullRoundTrip verifies login -> logout over real HTTP.
 // Exercises cookie passing, CSRF header, and middleware ordering end-to-end.
 func TestSmoke_FullRoundTrip(t *testing.T) {
