@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/gofrs/uuid/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 // --- CreateUserByEmail ---
@@ -470,6 +472,62 @@ func TestCleanupExpiredSessions(t *testing.T) {
 		}
 		// Can't assert exactly 0 (other tests may have left rows), just assert no error
 		_ = n
+	})
+}
+
+// --- UpdateUserPassword ---
+
+func TestUpdateUserPassword(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("updates password hash and updated_at", func(t *testing.T) {
+		email := "update_pwd@example.com"
+		oldHash := "argon2id$old"
+		newHash := "argon2id$new"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		id := mustCreateUser(t, ctx, email, oldHash)
+
+		// Capture created_at before update
+		var createdAt time.Time
+		if err := testStore.pool.QueryRow(ctx,
+			"SELECT created_at FROM users WHERE id = $1", id,
+		).Scan(&createdAt); err != nil {
+			t.Fatalf("querying created_at: %v", err)
+		}
+
+		// Small pause ensures updated_at > created_at
+		time.Sleep(2 * time.Millisecond)
+
+		if err := testStore.UpdateUserPassword(ctx, id, newHash); err != nil {
+			t.Fatalf("UpdateUserPassword failed: %v", err)
+		}
+
+		var dbHash string
+		var updatedAt time.Time
+		if err := testStore.pool.QueryRow(ctx,
+			"SELECT password_hash, updated_at FROM users WHERE id = $1", id,
+		).Scan(&dbHash, &updatedAt); err != nil {
+			t.Fatalf("querying updated user: %v", err)
+		}
+
+		if dbHash != newHash {
+			t.Errorf("password_hash: expected %q, got %q", newHash, dbHash)
+		}
+		if !updatedAt.After(createdAt) {
+			t.Errorf("updated_at (%v) should be after created_at (%v)", updatedAt, createdAt)
+		}
+	})
+
+	t.Run("returns pgx.ErrNoRows for nonexistent user", func(t *testing.T) {
+		fakeID, _ := uuid.NewV7()
+		err := testStore.UpdateUserPassword(ctx, fakeID, "argon2id$hash")
+		if err == nil {
+			t.Fatal("expected error for nonexistent user, got nil")
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("expected pgx.ErrNoRows, got %v", err)
+		}
 	})
 }
 
