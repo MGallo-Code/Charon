@@ -1,6 +1,6 @@
 // password_test.go
 
-// unit tests for HashPassword and VerifyPassword.
+// unit tests for HashPassword, VerifyPassword, and ValidatePassword.
 package auth
 
 import (
@@ -122,4 +122,30 @@ func TestVerifyPassword(t *testing.T) {
 			t.Error("expected error for invalid base64 hash")
 		}
 	})
+}
+
+// --- ValidatePassword ---
+
+func TestValidatePassword(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantMsg  string
+	}{
+		{"empty string", "", "No password provided!"},
+		{"one under minimum", "short", "Password too short!"},
+		{"exactly minimum", "sixchr", ""},
+		{"exactly maximum", strings.Repeat("a", 128), ""},
+		{"one over maximum", strings.Repeat("a", 129), "Password too long!"},
+		{"valid password", "correcthorsebatterystaple", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ValidatePassword(tc.input)
+			if got != tc.wantMsg {
+				t.Errorf("ValidatePassword(%q): expected %q, got %q", tc.input, tc.wantMsg, got)
+			}
+		})
+	}
 }

@@ -235,55 +235,6 @@ func TestRegisterByEmail(t *testing.T) {
 		assertBadRequest(t, w, "Invalid email format")
 	})
 
-	t.Run("missing password returns BadRequest", func(t *testing.T) {
-		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &testutil.MockStore{}}
-
-		// Body w// email, no pwd
-		body := strings.NewReader(`{"email":"test@email.com"}`)
-		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
-		w := httptest.NewRecorder()
-
-		// Attempt register
-		h.RegisterByEmail(w, r)
-
-		// assert bad request code
-		assertBadRequest(t, w, "No password provided!")
-	})
-
-	t.Run("password too short returns BadRequest", func(t *testing.T) {
-		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &testutil.MockStore{}}
-
-		// Body w// password too short (< 6 chars)
-		body := strings.NewReader(`{"email":"test@email.com","password":"short"}`)
-		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
-		w := httptest.NewRecorder()
-
-		// Attempt register
-		h.RegisterByEmail(w, r)
-
-		// assert bad request code
-		assertBadRequest(t, w, "Password too short!")
-	})
-
-	t.Run("password too long returns BadRequest", func(t *testing.T) {
-		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &testutil.MockStore{}}
-
-		// Body w// password too long (> 128 chars)
-		longPassword := strings.Repeat("a", 129)
-		body := strings.NewReader(fmt.Sprintf(`{"email":"test@email.com","password":"%s"}`, longPassword))
-		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
-		w := httptest.NewRecorder()
-
-		// Attempt register
-		h.RegisterByEmail(w, r)
-
-		// assert bad request code
-		assertBadRequest(t, w, "Password too long!")
-	})
-
 	// -- Happy path (201) --
 
 	t.Run("valid email and password returns Created", func(t *testing.T) {
