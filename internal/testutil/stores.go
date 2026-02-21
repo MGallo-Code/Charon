@@ -7,11 +7,13 @@ package testutil
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/MGallo-Code/charon/internal/store"
 	"github.com/gofrs/uuid/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 // MockStore implements auth.Store for tests....
@@ -61,7 +63,7 @@ func (m *MockStore) GetUserByEmail(_ context.Context, email string) (*store.User
 	defer m.mu.Unlock()
 	u, ok := m.Users[email]
 	if !ok {
-		return nil, errors.New("user not found")
+		return nil, fmt.Errorf("fetching user by email: %w", pgx.ErrNoRows)
 	}
 	return u, nil
 }
@@ -82,7 +84,7 @@ func (m *MockStore) UpdateUserPassword(_ context.Context, id uuid.UUID, password
 	}
 	// Check user find success
 	if u == nil {
-		return errors.New("user not found")
+		return fmt.Errorf("updating user password: %w", pgx.ErrNoRows)
 	}
 	// Update pwd
 	u.PasswordHash = passwordHash
@@ -116,7 +118,7 @@ func (m *MockStore) GetSessionByTokenHash(_ context.Context, tokenHash []byte) (
 	defer m.mu.Unlock()
 	s, ok := m.Sessions[string(tokenHash)]
 	if !ok {
-		return nil, errors.New("session not found")
+		return nil, fmt.Errorf("fetching session by token hash: %w", pgx.ErrNoRows)
 	}
 	return s, nil
 }
