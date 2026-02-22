@@ -7,9 +7,11 @@ package auth
 // Shares the same mock store and cache through both handler and middleware to verify
 // the encoding contracts between them:
 //
-//   - Cookie:   LoginByEmail (set cookie) -> RequireAuth (validate cookie)
-//   - CSRF:     LoginByEmail (set CSRF token) -> X-CSRF-Token -> CSRFMiddleware
-//   - Context:  RequireAuth (inject context) -> Logout (read context)
+//   - Cookie:      LoginByEmail (set cookie) -> RequireAuth (validate cookie)
+//   - CSRF:        LoginByEmail (set CSRF token) -> X-CSRF-Token -> CSRFMiddleware
+//   - Context:     RequireAuth (inject context) -> Logout (read context)
+//   - Password:    LoginByEmail -> RequireAuth -> PasswordChange (session + store update)
+//   - Isolation:   PasswordChange only affects the authenticated user's sessions
 //
 
 import (
@@ -30,16 +32,21 @@ import (
 // Both *store.User and its email string are returned.
 func newUserWithPassword(t *testing.T, password string) (*store.User, string) {
 	t.Helper()
-	email := "seam@example.com"
-	// Attempt to hash pwd
+	return newUser(t, "seam@example.com", password)
+}
+
+// newUser creates a test user with the given email and a real Argon2id hash for the given password.
+// Used when multiple distinct users are needed in one test.
+func newUser(t *testing.T, email, password string) (*store.User, string) {
+	t.Helper()
 	hash, err := HashPassword(password)
 	if err != nil {
-		t.Fatalf("newUserWithPassword: hashing password: %v", err)
+		t.Fatalf("newUser: hashing password: %v", err)
 	}
-	// Return user info in User object
+	e := email
 	return &store.User{
 		ID:           uuid.Must(uuid.NewV7()),
-		Email:        &email,
+		Email:        &e,
 		PasswordHash: hash,
 	}, email
 }
@@ -266,5 +273,180 @@ func TestWiring_RequireAuthContextWorksWithLogout(t *testing.T) {
 	// Session must be gone from the cache, proves Logout computed the same Redis key as Login.
 	if len(mc.Sessions) != 0 {
 		t.Errorf("session still in cache after logout (token hash encoding mismatch between Login and Logout?): %d remaining", len(mc.Sessions))
+	}
+}
+
+// --- PasswordChange wiring tests ---
+
+// doPasswordChange calls PasswordChange via RequireAuth with the given session cookie.
+func doPasswordChange(t *testing.T, h *AuthHandler, cookie *http.Cookie, currentPassword, newPassword string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := strings.NewReader(`{"current_password":"` + currentPassword + `","new_password":"` + newPassword + `"}`)
+	r := httptest.NewRequest(http.MethodPost, "/password/change", body)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.RequireAuth(http.HandlerFunc(h.PasswordChange)).ServeHTTP(w, r)
+	return w
+}
+
+// TestWiring_PasswordChange_WorksWithRequireAuth verifies the session cookie from LoginByEmail
+// works through RequireAuth into PasswordChange, and that all sessions are cleared on success.
+func TestWiring_PasswordChange_WorksWithRequireAuth(t *testing.T) {
+	user, email := newUserWithPassword(t, "oldpassword1")
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
+	h := &AuthHandler{PS: ms, RS: mc}
+
+	loginW := doLogin(t, h, email, "oldpassword1")
+	cookie := getSessionCookie(t, loginW)
+
+	if len(mc.Sessions) != 1 {
+		t.Fatalf("expected 1 session after login, got %d", len(mc.Sessions))
+	}
+
+	w := doPasswordChange(t, h, cookie, "oldpassword1", "newpassword1")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("password change: expected 200, got %d", w.Code)
+	}
+	if len(mc.Sessions) != 0 {
+		t.Errorf("expected 0 sessions after password change, got %d", len(mc.Sessions))
+	}
+}
+
+// TestWiring_PasswordChange_OldPasswordRejectedAfterChange verifies the store update is real:
+// the old password must no longer work for login after a successful change.
+func TestWiring_PasswordChange_OldPasswordRejectedAfterChange(t *testing.T) {
+	user, email := newUserWithPassword(t, "oldpassword1")
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
+	h := &AuthHandler{PS: ms, RS: mc}
+
+	// Change password
+	loginW := doLogin(t, h, email, "oldpassword1")
+	cookie := getSessionCookie(t, loginW)
+	if w := doPasswordChange(t, h, cookie, "oldpassword1", "newpassword1"); w.Code != http.StatusOK {
+		t.Fatalf("password change: expected 200, got %d", w.Code)
+	}
+
+	// Old password must be rejected
+	body := strings.NewReader(`{"email":"` + email + `","password":"oldpassword1"}`)
+	r := httptest.NewRequest(http.MethodPost, "/login/email", body)
+	w := httptest.NewRecorder()
+	h.LoginByEmail(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("login with old password after change: expected 401, got %d", w.Code)
+	}
+}
+
+// --- Cross-user isolation tests ---
+//
+// Verifies that authenticated operations are strictly scoped to the session owner.
+// User A must never be able to affect User B's account or sessions.
+
+// TestWiring_PasswordChange_DoesNotAffectOtherUser verifies User A's password change
+// only clears User A's sessions and does not alter User B's password or sessions.
+func TestWiring_PasswordChange_DoesNotAffectOtherUser(t *testing.T) {
+	userA, emailA := newUser(t, "a@example.com", "passwordA1")
+	userB, emailB := newUser(t, "b@example.com", "passwordB1")
+	ms := testutil.NewMockStore(userA, userB)
+	mc := testutil.NewMockCache()
+	h := &AuthHandler{PS: ms, RS: mc}
+
+	// Both users log in
+	doLogin(t, h, emailB, "passwordB1")
+	loginW := doLogin(t, h, emailA, "passwordA1")
+	cookie := getSessionCookie(t, loginW)
+
+	if len(mc.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions before password change, got %d", len(mc.Sessions))
+	}
+
+	// User A changes their password
+	if w := doPasswordChange(t, h, cookie, "passwordA1", "newPasswordA1"); w.Code != http.StatusOK {
+		t.Fatalf("password change: expected 200, got %d", w.Code)
+	}
+
+	// User B's session must still be in the cache
+	if len(mc.Sessions) != 1 {
+		t.Errorf("expected 1 session remaining (User B's) after User A's password change, got %d", len(mc.Sessions))
+	}
+
+	// User B must still be able to log in with their original password
+	body := strings.NewReader(`{"email":"` + emailB + `","password":"passwordB1"}`)
+	r := httptest.NewRequest(http.MethodPost, "/login/email", body)
+	w := httptest.NewRecorder()
+	h.LoginByEmail(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("user B login after user A password change: expected 200, got %d", w.Code)
+	}
+}
+
+// TestWiring_LogoutAll_DoesNotAffectOtherUser verifies User A's logout-all
+// only clears User A's sessions, leaving User B's sessions intact.
+func TestWiring_LogoutAll_DoesNotAffectOtherUser(t *testing.T) {
+	userA, emailA := newUser(t, "a@example.com", "passwordA1")
+	userB, _ := newUser(t, "b@example.com", "passwordB1")
+	ms := testutil.NewMockStore(userA, userB)
+	mc := testutil.NewMockCache()
+	h := &AuthHandler{PS: ms, RS: mc}
+
+	// Both users log in
+	doLogin(t, h, "b@example.com", "passwordB1")
+	loginW := doLogin(t, h, emailA, "passwordA1")
+	cookie := getSessionCookie(t, loginW)
+
+	if len(mc.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions before logout-all, got %d", len(mc.Sessions))
+	}
+
+	// User A logs out of all devices
+	r := httptest.NewRequest(http.MethodPost, "/logout-all", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.RequireAuth(http.HandlerFunc(h.LogoutAll)).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("logout-all: expected 200, got %d", w.Code)
+	}
+
+	// User B's session must still be in the cache
+	if len(mc.Sessions) != 1 {
+		t.Errorf("expected 1 session remaining (User B's) after User A's logout-all, got %d", len(mc.Sessions))
+	}
+}
+
+// TestWiring_Logout_DoesNotAffectOtherUser verifies User A's logout only removes
+// User A's current session, leaving User B's sessions intact.
+func TestWiring_Logout_DoesNotAffectOtherUser(t *testing.T) {
+	userA, emailA := newUser(t, "a@example.com", "passwordA1")
+	userB, _ := newUser(t, "b@example.com", "passwordB1")
+	ms := testutil.NewMockStore(userA, userB)
+	mc := testutil.NewMockCache()
+	h := &AuthHandler{PS: ms, RS: mc}
+
+	// Both users log in
+	doLogin(t, h, "b@example.com", "passwordB1")
+	loginW := doLogin(t, h, emailA, "passwordA1")
+	cookie := getSessionCookie(t, loginW)
+
+	if len(mc.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions before logout, got %d", len(mc.Sessions))
+	}
+
+	// User A logs out of current session
+	r := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.RequireAuth(http.HandlerFunc(h.Logout)).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("logout: expected 200, got %d", w.Code)
+	}
+
+	// User B's session must still be in the cache
+	if len(mc.Sessions) != 1 {
+		t.Errorf("expected 1 session remaining (User B's) after User A's logout, got %d", len(mc.Sessions))
 	}
 }
