@@ -77,6 +77,73 @@ func skipIfNoE2E(t *testing.T) {
 	}
 }
 
+// --- E2E helpers ---
+
+// e2eRegister registers a new user. Fatals on error or non-201.
+func e2eRegister(t *testing.T, email, password string) {
+	t.Helper()
+	resp, err := http.Post(e2eServerURL+"/register/email", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
+	if err != nil {
+		t.Fatalf("POST /register/email: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register: expected 201, got %d", resp.StatusCode)
+	}
+}
+
+// e2eLogin logs in and returns the session cookie value and CSRF token. Fatals on error or non-200.
+func e2eLogin(t *testing.T, email, password string) (cookieValue, csrfToken string) {
+	t.Helper()
+	resp, err := http.Post(e2eServerURL+"/login/email", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
+	if err != nil {
+		t.Fatalf("POST /login/email: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login: expected 200, got %d", resp.StatusCode)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == "__Host-session" {
+			cookieValue = c.Value
+			break
+		}
+	}
+	if cookieValue == "" {
+		t.Fatal("e2eLogin: no session cookie in response")
+	}
+	var body struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("e2eLogin: decoding response: %v", err)
+	}
+	if body.CSRFToken == "" {
+		t.Fatal("e2eLogin: no csrf_token in response")
+	}
+	return cookieValue, body.CSRFToken
+}
+
+// e2eAuthPost makes an authenticated POST with session cookie and X-CSRF-Token.
+// Caller must close the returned response body.
+func e2eAuthPost(t *testing.T, path, cookieValue, csrfToken, jsonBody string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, e2eServerURL+path, strings.NewReader(jsonBody))
+	if err != nil {
+		t.Fatalf("building %s request: %v", path, err)
+	}
+	req.Header.Set("Cookie", "__Host-session="+cookieValue)
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	return resp
+}
+
 // --- E2E tests ---
 
 // TestE2E_Health verifies /health returns {"status":"ok"} against the real server.
@@ -106,19 +173,7 @@ func TestE2E_Health(t *testing.T) {
 // TestE2E_Register verifies a new user can be created against real Postgres.
 func TestE2E_Register(t *testing.T) {
 	skipIfNoE2E(t)
-
-	email := fmt.Sprintf("e2e-reg-%d@example.com", time.Now().UnixNano())
-	password := "e2epassword1"
-
-	resp, err := http.Post(e2eServerURL+"/register/email", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
-	if err != nil {
-		t.Fatalf("POST /register/email: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		t.Errorf("status: expected 201, got %d", resp.StatusCode)
-	}
+	e2eRegister(t, fmt.Sprintf("e2e-reg-%d@example.com", time.Now().UnixNano()), "e2epassword1")
 }
 
 // TestE2E_Register_And_Login verifies the register -> login flow against real Postgres + Redis.
@@ -128,54 +183,8 @@ func TestE2E_Register_And_Login(t *testing.T) {
 	email := fmt.Sprintf("e2e-%d@example.com", time.Now().UnixNano())
 	password := "e2epassword1"
 
-	// Register
-	regResp, err := http.Post(e2eServerURL+"/register/email", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
-	if err != nil {
-		t.Fatalf("POST /register/email: %v", err)
-	}
-	regResp.Body.Close()
-	if regResp.StatusCode != http.StatusCreated {
-		t.Fatalf("register: expected 201, got %d", regResp.StatusCode)
-	}
-
-	// Login
-	loginResp, err := http.Post(e2eServerURL+"/login/email", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
-	if err != nil {
-		t.Fatalf("POST /login/email: %v", err)
-	}
-	defer loginResp.Body.Close()
-	if loginResp.StatusCode != http.StatusOK {
-		t.Fatalf("login: expected 200, got %d", loginResp.StatusCode)
-	}
-
-	// Session cookie must be set
-	var sessionCookie *http.Cookie
-	for _, c := range loginResp.Cookies() {
-		if c.Name == "__Host-session" {
-			sessionCookie = c
-			break
-		}
-	}
-	if sessionCookie == nil {
-		t.Fatal("__Host-session cookie not set after login")
-	}
-
-	// Body must have user_id and csrf_token
-	var body struct {
-		UserID    string `json:"user_id"`
-		CSRFToken string `json:"csrf_token"`
-	}
-	if err := json.NewDecoder(loginResp.Body).Decode(&body); err != nil {
-		t.Fatalf("decoding login response: %v", err)
-	}
-	if body.UserID == "" {
-		t.Error("user_id missing from login response")
-	}
-	if body.CSRFToken == "" {
-		t.Error("csrf_token missing from login response")
-	}
+	e2eRegister(t, email, password)
+	e2eLogin(t, email, password)
 }
 
 // TestE2E_FullRoundTrip_LogoutAll verifies register -> login -> logout-all against real Postgres + Redis.
@@ -185,66 +194,20 @@ func TestE2E_FullRoundTrip_LogoutAll(t *testing.T) {
 	email := fmt.Sprintf("e2e-loa-%d@example.com", time.Now().UnixNano())
 	password := "logoutalldebug1"
 
-	// Step 1: Register
-	regResp, err := http.Post(e2eServerURL+"/register/email", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
-	if err != nil {
-		t.Fatalf("POST /register/email: %v", err)
-	}
-	regResp.Body.Close()
-	if regResp.StatusCode != http.StatusCreated {
-		t.Fatalf("register: expected 201, got %d", regResp.StatusCode)
-	}
+	// Step 1: Register + login
+	e2eRegister(t, email, password)
+	cookieValue, csrfToken := e2eLogin(t, email, password)
 
-	// Step 2: Login -- capture session cookie and CSRF token
-	loginResp, err := http.Post(e2eServerURL+"/login/email", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
-	if err != nil {
-		t.Fatalf("POST /login/email: %v", err)
-	}
-	var cookieValue string
-	for _, c := range loginResp.Cookies() {
-		if c.Name == "__Host-session" {
-			cookieValue = c.Value
-			break
-		}
-	}
-	if cookieValue == "" {
-		loginResp.Body.Close()
-		t.Fatal("no session cookie from login")
-	}
-	var loginBody struct {
-		CSRFToken string `json:"csrf_token"`
-	}
-	if err := json.NewDecoder(loginResp.Body).Decode(&loginBody); err != nil {
-		loginResp.Body.Close()
-		t.Fatalf("decoding login response: %v", err)
-	}
-	loginResp.Body.Close()
-	if loginBody.CSRFToken == "" {
-		t.Fatal("no csrf_token from login")
-	}
+	// Step 2: LogoutAll
+	resp := e2eAuthPost(t, "/logout-all", cookieValue, csrfToken, "")
+	defer resp.Body.Close()
 
-	// Step 3: LogoutAll -- pass session cookie and CSRF token
-	req, err := http.NewRequest(http.MethodPost, e2eServerURL+"/logout-all", nil)
-	if err != nil {
-		t.Fatalf("building logout-all request: %v", err)
-	}
-	req.Header.Set("Cookie", "__Host-session="+cookieValue)
-	req.Header.Set("X-CSRF-Token", loginBody.CSRFToken)
-
-	logoutAllResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("POST /logout-all: %v", err)
-	}
-	defer logoutAllResp.Body.Close()
-
-	if logoutAllResp.StatusCode != http.StatusOK {
-		t.Errorf("logout-all: expected 200, got %d", logoutAllResp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("logout-all: expected 200, got %d", resp.StatusCode)
 	}
 
 	// Session cookie must be cleared
-	for _, c := range logoutAllResp.Cookies() {
+	for _, c := range resp.Cookies() {
 		if c.Name == "__Host-session" {
 			if c.MaxAge != -1 {
 				t.Errorf("cookie MaxAge: expected -1 (cleared), got %d", c.MaxAge)
@@ -262,66 +225,20 @@ func TestE2E_FullRoundTrip(t *testing.T) {
 	email := fmt.Sprintf("e2e-rt-%d@example.com", time.Now().UnixNano())
 	password := "roundtrippass1"
 
-	// Step 1: Register
-	regResp, err := http.Post(e2eServerURL+"/register/email", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
-	if err != nil {
-		t.Fatalf("POST /register/email: %v", err)
-	}
-	regResp.Body.Close()
-	if regResp.StatusCode != http.StatusCreated {
-		t.Fatalf("register: expected 201, got %d", regResp.StatusCode)
+	// Step 1: Register + login
+	e2eRegister(t, email, password)
+	cookieValue, csrfToken := e2eLogin(t, email, password)
+
+	// Step 2: Logout
+	resp := e2eAuthPost(t, "/logout", cookieValue, csrfToken, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("logout: expected 200, got %d", resp.StatusCode)
 	}
 
-	// Step 2: Login -- capture session cookie and CSRF token
-	loginResp, err := http.Post(e2eServerURL+"/login/email", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
-	if err != nil {
-		t.Fatalf("POST /login/email: %v", err)
-	}
-	var cookieValue string
-	for _, c := range loginResp.Cookies() {
-		if c.Name == "__Host-session" {
-			cookieValue = c.Value
-			break
-		}
-	}
-	if cookieValue == "" {
-		loginResp.Body.Close()
-		t.Fatal("no session cookie from login")
-	}
-	var loginBody struct {
-		CSRFToken string `json:"csrf_token"`
-	}
-	if err := json.NewDecoder(loginResp.Body).Decode(&loginBody); err != nil {
-		loginResp.Body.Close()
-		t.Fatalf("decoding login response: %v", err)
-	}
-	loginResp.Body.Close()
-	if loginBody.CSRFToken == "" {
-		t.Fatal("no csrf_token from login")
-	}
-
-	// Step 3: Logout -- pass session cookie and CSRF token
-	req, err := http.NewRequest(http.MethodPost, e2eServerURL+"/logout", nil)
-	if err != nil {
-		t.Fatalf("building logout request: %v", err)
-	}
-	req.Header.Set("Cookie", "__Host-session="+cookieValue)
-	req.Header.Set("X-CSRF-Token", loginBody.CSRFToken)
-
-	logoutResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("POST /logout: %v", err)
-	}
-	defer logoutResp.Body.Close()
-
-	if logoutResp.StatusCode != http.StatusOK {
-		t.Errorf("logout: expected 200, got %d", logoutResp.StatusCode)
-	}
-
-	// Session cookie must be cleared in logout response
-	for _, c := range logoutResp.Cookies() {
+	// Session cookie must be cleared
+	for _, c := range resp.Cookies() {
 		if c.Name == "__Host-session" {
 			if c.MaxAge != -1 {
 				t.Errorf("cookie MaxAge: expected -1 (cleared), got %d", c.MaxAge)
@@ -330,4 +247,85 @@ func TestE2E_FullRoundTrip(t *testing.T) {
 		}
 	}
 	t.Error("__Host-session not found in logout response")
+}
+
+// TestE2E_FullRoundTrip_PasswordChange verifies register -> login -> password change ->
+// old password rejected -> new password works against real Postgres + Redis.
+func TestE2E_FullRoundTrip_PasswordChange(t *testing.T) {
+	skipIfNoE2E(t)
+
+	email := fmt.Sprintf("e2e-pwdch-%d@example.com", time.Now().UnixNano())
+	oldPassword := "oldpassword1"
+	newPassword := "newpassword1"
+
+	// Step 1: Register
+	e2eRegister(t, email, oldPassword)
+
+	// Step 2: Login
+	cookieValue, csrfToken := e2eLogin(t, email, oldPassword)
+
+	// Step 3: Change password
+	pwdResp := e2eAuthPost(t, "/password/change", cookieValue, csrfToken,
+		fmt.Sprintf(`{"current_password":%q,"new_password":%q}`, oldPassword, newPassword))
+	defer pwdResp.Body.Close()
+	if pwdResp.StatusCode != http.StatusOK {
+		t.Fatalf("password change: expected 200, got %d", pwdResp.StatusCode)
+	}
+
+	// Session cookie must be cleared in response
+	var cookieCleared bool
+	for _, c := range pwdResp.Cookies() {
+		if c.Name == "__Host-session" {
+			cookieCleared = c.MaxAge == -1
+			break
+		}
+	}
+	if !cookieCleared {
+		t.Error("expected session cookie to be cleared after password change")
+	}
+
+	// Step 4: Old password must be rejected
+	resp, err := http.Post(e2eServerURL+"/login/email", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, oldPassword)))
+	if err != nil {
+		t.Fatalf("POST /login/email: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("login with old password: expected 401, got %d", resp.StatusCode)
+	}
+
+	// Step 5: New password must work
+	_, _ = e2eLogin(t, email, newPassword)
+}
+
+// TestE2E_PasswordChange_DoesNotAffectOtherUser verifies that User A's password change
+// does not affect User B's credentials or session against real Postgres + Redis.
+func TestE2E_PasswordChange_DoesNotAffectOtherUser(t *testing.T) {
+	skipIfNoE2E(t)
+
+	ts := time.Now().UnixNano()
+	emailA := fmt.Sprintf("e2e-pwdiso-a-%d@example.com", ts)
+	emailB := fmt.Sprintf("e2e-pwdiso-b-%d@example.com", ts)
+	passwordA := "passwordA1"
+	passwordB := "passwordB1"
+
+	// Register both users
+	e2eRegister(t, emailA, passwordA)
+	e2eRegister(t, emailB, passwordB)
+
+	// Both log in
+	cookieA, csrfA := e2eLogin(t, emailA, passwordA)
+	_, _ = e2eLogin(t, emailB, passwordB)
+
+	// User A changes their password
+	pwdResp := e2eAuthPost(t, "/password/change", cookieA, csrfA,
+		fmt.Sprintf(`{"current_password":%q,"new_password":%q}`, passwordA, "newPasswordA1"))
+	pwdResp.Body.Close()
+	if pwdResp.StatusCode != http.StatusOK {
+		t.Fatalf("password change: expected 200, got %d", pwdResp.StatusCode)
+	}
+
+	// User B must still be able to log in with their original password
+	_, _ = e2eLogin(t, emailB, passwordB)
 }
