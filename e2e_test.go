@@ -110,10 +110,10 @@ func TestE2E_Register(t *testing.T) {
 	email := fmt.Sprintf("e2e-reg-%d@example.com", time.Now().UnixNano())
 	password := "e2epassword1"
 
-	resp, err := http.Post(e2eServerURL+"/registerEmail", "application/json",
+	resp, err := http.Post(e2eServerURL+"/register/email", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
 	if err != nil {
-		t.Fatalf("POST /registerEmail: %v", err)
+		t.Fatalf("POST /register/email: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
@@ -129,10 +129,10 @@ func TestE2E_Register_And_Login(t *testing.T) {
 	password := "e2epassword1"
 
 	// Register
-	regResp, err := http.Post(e2eServerURL+"/registerEmail", "application/json",
+	regResp, err := http.Post(e2eServerURL+"/register/email", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
 	if err != nil {
-		t.Fatalf("POST /registerEmail: %v", err)
+		t.Fatalf("POST /register/email: %v", err)
 	}
 	regResp.Body.Close()
 	if regResp.StatusCode != http.StatusCreated {
@@ -140,10 +140,10 @@ func TestE2E_Register_And_Login(t *testing.T) {
 	}
 
 	// Login
-	loginResp, err := http.Post(e2eServerURL+"/loginEmail", "application/json",
+	loginResp, err := http.Post(e2eServerURL+"/login/email", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
 	if err != nil {
-		t.Fatalf("POST /loginEmail: %v", err)
+		t.Fatalf("POST /login/email: %v", err)
 	}
 	defer loginResp.Body.Close()
 	if loginResp.StatusCode != http.StatusOK {
@@ -186,10 +186,10 @@ func TestE2E_FullRoundTrip_LogoutAll(t *testing.T) {
 	password := "logoutalldebug1"
 
 	// Step 1: Register
-	regResp, err := http.Post(e2eServerURL+"/registerEmail", "application/json",
+	regResp, err := http.Post(e2eServerURL+"/register/email", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
 	if err != nil {
-		t.Fatalf("POST /registerEmail: %v", err)
+		t.Fatalf("POST /register/email: %v", err)
 	}
 	regResp.Body.Close()
 	if regResp.StatusCode != http.StatusCreated {
@@ -197,10 +197,10 @@ func TestE2E_FullRoundTrip_LogoutAll(t *testing.T) {
 	}
 
 	// Step 2: Login -- capture session cookie and CSRF token
-	loginResp, err := http.Post(e2eServerURL+"/loginEmail", "application/json",
+	loginResp, err := http.Post(e2eServerURL+"/login/email", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
 	if err != nil {
-		t.Fatalf("POST /loginEmail: %v", err)
+		t.Fatalf("POST /login/email: %v", err)
 	}
 	var cookieValue string
 	for _, c := range loginResp.Cookies() {
@@ -263,10 +263,10 @@ func TestE2E_FullRoundTrip(t *testing.T) {
 	password := "roundtrippass1"
 
 	// Step 1: Register
-	regResp, err := http.Post(e2eServerURL+"/registerEmail", "application/json",
+	regResp, err := http.Post(e2eServerURL+"/register/email", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
 	if err != nil {
-		t.Fatalf("POST /registerEmail: %v", err)
+		t.Fatalf("POST /register/email: %v", err)
 	}
 	regResp.Body.Close()
 	if regResp.StatusCode != http.StatusCreated {
@@ -274,10 +274,10 @@ func TestE2E_FullRoundTrip(t *testing.T) {
 	}
 
 	// Step 2: Login -- capture session cookie and CSRF token
-	loginResp, err := http.Post(e2eServerURL+"/loginEmail", "application/json",
+	loginResp, err := http.Post(e2eServerURL+"/login/email", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, password)))
 	if err != nil {
-		t.Fatalf("POST /loginEmail: %v", err)
+		t.Fatalf("POST /login/email: %v", err)
 	}
 	var cookieValue string
 	for _, c := range loginResp.Cookies() {

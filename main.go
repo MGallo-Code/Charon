@@ -168,16 +168,15 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
 
-	// Handle GET req to /health, respond ok
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
-	r.Post("/registerEmail", h.RegisterByEmail)
-	r.Post("/loginEmail", h.LoginByEmail)
+	r.Post("/register/email", h.RegisterByEmail)
+	r.Post("/login/email", h.LoginByEmail)
 
-	// Authentication Required routes
+	// Authentication required routes
 	r.Group(func(r chi.Router) {
 		r.Use(h.RequireAuth)
 		// CSRF reads token injected by RequireAuth above
@@ -185,6 +184,7 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 		r.Use(h.CSRFMiddleware)
 		r.Post("/logout", h.Logout)
 		r.Post("/logout-all", h.LogoutAll)
+		r.Post("/password/change", h.PasswordChange)
 	})
 
 	return r

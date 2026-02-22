@@ -46,9 +46,9 @@ func newSmokeHandler(t *testing.T) *auth.AuthHandler {
 func doSmokeLogin(t *testing.T, serverURL string) *http.Response {
 	t.Helper()
 	payload := `{"email":"` + smokeEmail + `","password":"` + smokePassword + `"}`
-	resp, err := http.Post(serverURL+"/loginEmail", "application/json", strings.NewReader(payload))
+	resp, err := http.Post(serverURL+"/login/email", "application/json", strings.NewReader(payload))
 	if err != nil {
-		t.Fatalf("POST /loginEmail: %v", err)
+		t.Fatalf("POST /login/email: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()

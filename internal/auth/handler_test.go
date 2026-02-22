@@ -1,6 +1,6 @@
 // handler_test.go
 
-// unit tests for RegisterByEmail, LoginByEmail, and Logout handlers.
+// unit tests for RegisterByEmail, LoginByEmail, Logout, LogoutAll, and PasswordChange handlers.
 
 package auth
 
@@ -613,6 +613,197 @@ func TestLogoutAll(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		h.LogoutAll(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+		assertClearedSessionCookie(t, w)
+	})
+}
+
+// --- PasswordChange ---
+
+// pwdChangeReq builds a POST /password/change request with userID injected in context.
+func pwdChangeReq(userID uuid.UUID, currentPwd, newPwd string) *http.Request {
+	body := strings.NewReader(fmt.Sprintf(
+		`{"current_password":%q,"new_password":%q}`, currentPwd, newPwd,
+	))
+	r := httptest.NewRequest(http.MethodPost, "/password/change", body)
+	ctx := context.WithValue(r.Context(), userIDKey, userID)
+	return r.WithContext(ctx)
+}
+
+func TestPasswordChange(t *testing.T) {
+	testPassword := "oldpassword1"
+	testHash, _ := HashPassword(testPassword)
+	testEmail := "pwchange@example.com"
+	testUser := &store.User{
+		ID:           uuid.Must(uuid.NewV7()),
+		Email:        &testEmail,
+		PasswordHash: testHash,
+	}
+
+	// freshUser returns a new User with a freshly hashed testPassword.
+	// MockStore stores users by pointer, and UpdateUserPassword mutates PasswordHash
+	// in place; tests that reach UpdateUserPassword need their own copy.
+	freshUser := func() *store.User {
+		h, _ := HashPassword(testPassword)
+		return &store.User{ID: testUser.ID, Email: testUser.Email, PasswordHash: h}
+	}
+
+	// -- Input validation (400s) --
+
+	t.Run("empty body returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := httptest.NewRequest(http.MethodPost, "/password/change", nil)
+		ctx := context.WithValue(r.Context(), userIDKey, testUser.ID)
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r.WithContext(ctx))
+
+		assertBadRequest(t, w, "error decoding request body")
+	})
+
+	t.Run("invalid JSON returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		body := strings.NewReader(`{not valid json}`)
+		r := httptest.NewRequest(http.MethodPost, "/password/change", body)
+		ctx := context.WithValue(r.Context(), userIDKey, testUser.ID)
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r.WithContext(ctx))
+
+		assertBadRequest(t, w, "error decoding request body")
+	})
+
+	t.Run("missing current_password returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := pwdChangeReq(testUser.ID, "", "validnewpassword")
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
+
+		assertBadRequest(t, w, "current_password required")
+	})
+
+	t.Run("invalid new_password returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := pwdChangeReq(testUser.ID, testPassword, "short")
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
+
+		assertBadRequest(t, w, "Password too short!")
+	})
+
+	// -- Missing context (500) --
+
+	t.Run("missing userID in context returns InternalServerError", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		// No context, simulates handler called without RequireAuth.
+		r := httptest.NewRequest(http.MethodPost, "/password/change",
+			strings.NewReader(`{"current_password":"oldpassword1","new_password":"validnewpassword"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	// -- Auth failures (401s) --
+
+	t.Run("wrong current_password returns Unauthorized", func(t *testing.T) {
+		h := AuthHandler{PS: testutil.NewMockStore(testUser), RS: testutil.NewMockCache()}
+
+		r := pwdChangeReq(testUser.ID, "wrongpassword", "validnewpassword")
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
+
+		assertUnauthorized(t, w, "invalid credentials")
+	})
+
+	// -- Store errors (500s) --
+
+	t.Run("GetUserByID failure returns InternalServerError", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &testutil.MockStore{GetUserByIDErr: errors.New("database connection failed")},
+			RS: testutil.NewMockCache(),
+		}
+
+		r := pwdChangeReq(testUser.ID, testPassword, "validnewpassword")
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	t.Run("UpdateUserPassword failure returns InternalServerError", func(t *testing.T) {
+		// UpdateUserPasswordErr causes early return before mutation; testUser is safe.
+		ps := testutil.NewMockStore(testUser)
+		ps.UpdateUserPasswordErr = errors.New("database write failed")
+		h := AuthHandler{PS: ps, RS: testutil.NewMockCache()}
+
+		r := pwdChangeReq(testUser.ID, testPassword, "validnewpassword")
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	t.Run("Postgres DeleteAllUserSessions failure returns InternalServerError", func(t *testing.T) {
+		// Reaches UpdateUserPassword successfully (mutates); use fresh copy.
+		ps := testutil.NewMockStore(freshUser())
+		ps.DeleteAllSessionsErr = errors.New("database write failed")
+		h := AuthHandler{PS: ps, RS: testutil.NewMockCache()}
+
+		r := pwdChangeReq(testUser.ID, testPassword, "validnewpassword")
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	// -- Non-fatal failures --
+
+	t.Run("Redis DeleteAllUserSessions failure still returns OK", func(t *testing.T) {
+		// Reaches UpdateUserPassword successfully (mutates); use fresh copy.
+		h := AuthHandler{
+			PS: testutil.NewMockStore(freshUser()),
+			RS: &testutil.MockCache{DeleteAllSessionsErr: errors.New("redis unavailable")},
+		}
+
+		r := pwdChangeReq(testUser.ID, testPassword, "validnewpassword")
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+	})
+
+	// -- Happy path (200) --
+
+	t.Run("valid request returns OK and clears cookie", func(t *testing.T) {
+		// Reaches UpdateUserPassword successfully (mutates); use fresh copy.
+		h := AuthHandler{
+			PS: testutil.NewMockStore(freshUser()),
+			RS: testutil.NewMockCache(),
+		}
+
+		r := pwdChangeReq(testUser.ID, testPassword, "validnewpassword")
+		w := httptest.NewRecorder()
+
+		h.PasswordChange(w, r)
 
 		if w.Code != http.StatusOK {
 			t.Errorf("status: expected 200, got %d", w.Code)
