@@ -521,6 +521,101 @@ func TestUpdateUserPassword(t *testing.T) {
 	})
 }
 
+// --- CreateToken ---
+
+func TestCreateToken(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("stores correct values and defaults", func(t *testing.T) {
+		email := "token_create@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenID, _ := uuid.NewV7()
+		tokenHash := sha256.Sum256([]byte("test-token-create"))
+		expiresAt := time.Now().Add(1 * time.Hour).Truncate(time.Microsecond)
+
+		err := testStore.CreateToken(ctx, tokenID, userID, "password_reset", tokenHash[:], expiresAt)
+		if err != nil {
+			t.Fatalf("CreateToken failed: %v", err)
+		}
+
+		// Verify stored values via direct query
+		var (
+			dbID        uuid.UUID
+			dbUserID    uuid.UUID
+			dbTokenType string
+			dbTokenHash []byte
+			dbUsedAt    *time.Time
+			dbExpiresAt time.Time
+			dbCreatedAt time.Time
+		)
+		err = testStore.pool.QueryRow(ctx, `
+			SELECT id, user_id, token_type, token_hash, used_at, expires_at, created_at
+			FROM tokens WHERE id = $1
+		`, tokenID).Scan(&dbID, &dbUserID, &dbTokenType, &dbTokenHash, &dbUsedAt, &dbExpiresAt, &dbCreatedAt)
+		if err != nil {
+			t.Fatalf("querying token: %v", err)
+		}
+
+		if dbID != tokenID {
+			t.Errorf("id: expected %v, got %v", tokenID, dbID)
+		}
+		if dbUserID != userID {
+			t.Errorf("user_id: expected %v, got %v", userID, dbUserID)
+		}
+		if dbTokenType != "password_reset" {
+			t.Errorf("token_type: expected %q, got %q", "password_reset", dbTokenType)
+		}
+		if string(dbTokenHash) != string(tokenHash[:]) {
+			t.Error("token_hash does not match")
+		}
+		if !dbExpiresAt.Equal(expiresAt) {
+			t.Errorf("expires_at: expected %v, got %v", expiresAt, dbExpiresAt)
+		}
+		if dbUsedAt != nil {
+			t.Error("used_at should be NULL on creation")
+		}
+		if dbCreatedAt.IsZero() {
+			t.Error("created_at was not set")
+		}
+	})
+
+	t.Run("returns error on duplicate token hash", func(t *testing.T) {
+		email := "token_dup_hash@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-dup"))
+		expiresAt := time.Now().Add(1 * time.Hour)
+
+		id1, _ := uuid.NewV7()
+		if err := testStore.CreateToken(ctx, id1, userID, "password_reset", tokenHash[:], expiresAt); err != nil {
+			t.Fatalf("first CreateToken failed: %v", err)
+		}
+
+		id2, _ := uuid.NewV7()
+		err := testStore.CreateToken(ctx, id2, userID, "password_reset", tokenHash[:], expiresAt)
+		if err == nil {
+			t.Fatal("expected error for duplicate token hash, got nil")
+		}
+	})
+
+	t.Run("returns error for invalid token type", func(t *testing.T) {
+		email := "token_invalid_type@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenID, _ := uuid.NewV7()
+		tokenHash := sha256.Sum256([]byte("test-token-invalid-type"))
+
+		err := testStore.CreateToken(ctx, tokenID, userID, "invalid_type", tokenHash[:], time.Now().Add(1*time.Hour))
+		if err == nil {
+			t.Fatal("expected error for invalid token type, got nil")
+		}
+	})
+}
+
 // --- DeleteAllUserSessions (Postgres) ---
 
 func TestDeleteAllUserSessionsPG(t *testing.T) {
