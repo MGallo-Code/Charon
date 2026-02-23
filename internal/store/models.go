@@ -3,10 +3,15 @@
 package store
 
 import (
+	"errors"
 	"time"
 
 	"github.com/gofrs/uuid/v5"
 )
+
+// ErrRateLimitExceeded is returned by Allow when the caller is locked out.
+// Callers use errors.Is to distinguish rate limit rejections from Redis failures.
+var ErrRateLimitExceeded = errors.New("rate limit exceeded")
 
 // User represents a row in the users table.
 // Nullable columns are pointers — nil means SQL NULL.
