@@ -47,6 +47,14 @@ type CachedSession struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// RateLimit defines the policy for a rate-limited action.
+// All three fields required, zero values disable the respective behaviour.
+type RateLimit struct {
+	MaxAttempts int           // attempts allowed within Window before lockout
+	Window      time.Duration // rolling window for attempt counting
+	LockoutTTL  time.Duration // how long to block after MaxAttempts is hit
+}
+
 // Token represents a row in the tokens table.
 // TokenType is constrained by DB CHECK ('password_reset', 'email_verification').
 // UsedAt is nil until consumed; set once on use to prevent replay.
