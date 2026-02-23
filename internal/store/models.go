@@ -46,3 +46,16 @@ type CachedSession struct {
 	CSRFToken []byte    `json:"csrf_token"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
+
+// Token represents a row in the tokens table.
+// TokenType is constrained by DB CHECK ('password_reset', 'email_verification').
+// UsedAt is nil until consumed; set once on use to prevent replay.
+type Token struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	TokenType string
+	TokenHash []byte
+	UsedAt    *time.Time
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
