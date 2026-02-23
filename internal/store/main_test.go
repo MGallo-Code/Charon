@@ -34,13 +34,13 @@ func TestMain(m *testing.M) {
 	}
 
 	// Attempts to connect to redis, log err
-	rs, err := NewRedisStore(ctx, "redis://localhost:6380")
+	rdb, err := NewRedisClient(ctx, "redis://localhost:6380")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to connect to test redis: %v\n", err)
 		testStore.Close()
 		os.Exit(1)
 	}
-	testRedis = rs
+	testRedis = NewRedisStore(rdb)
 
 	// Run tests :))
 	code := m.Run()

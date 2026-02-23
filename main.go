@@ -77,16 +77,18 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string) error {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	// Create new redis store, return errors if any
-	rs, err := store.NewRedisStore(ctx, cfg.RedisURL)
+	// Create shared Redis client; all Redis structs share one connection pool.
+	rdb, err := store.NewRedisClient(ctx, cfg.RedisURL)
 	if err != nil {
-		return fmt.Errorf("failed to set up redis store: %w", err)
+		return fmt.Errorf("failed to set up redis client: %w", err)
 	}
-	// Close at end of run
-	defer rs.Close()
+	defer rdb.Close()
+
+	rs := store.NewRedisStore(rdb)
+	rl := store.NewRedisRateLimiter(rdb)
 
 	// Create AuthHandler
-	h := auth.AuthHandler{PS: ps, RS: rs}
+	h := auth.AuthHandler{PS: ps, RS: rs, RL: rl}
 
 	// Bind listener; ":0" picks a free port (useful in tests).
 	ln, err := net.Listen("tcp", ":"+cfg.Port)

@@ -62,6 +62,14 @@ type Store interface {
 	DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error
 }
 
+// RateLimiter checks and records rate limit state for a given key and policy.
+// Satisfied by *store.RedisRateLimiter -- defined here per Go convention.
+type RateLimiter interface {
+	// Allow checks whether the action is within policy, records the attempt.
+	// Returns nil if allowed; non-nil error if locked out or threshold exceeded.
+	Allow(ctx context.Context, key string, policy store.RateLimit) error
+}
+
 // dummyPasswordHash is a precomputed Argon2id hash for timing attack mitigation.
 // When a user doesn't exist, verify against this so both paths take equal time (~100ms).
 const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$YWJjZGVmZ2hpamtsbW5vcA$kC6C6jqLzC0JLlJgXhHbKMhLLpVvLJLLQw/IqT9ZYPU"
@@ -70,6 +78,7 @@ const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$YWJjZGVmZ2hpamtsbW5vcA
 type AuthHandler struct {
 	PS Store
 	RS SessionCache
+	RL RateLimiter
 }
 
 // RegisterByEmail handles POST /register — email + password signup.
