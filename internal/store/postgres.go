@@ -240,6 +240,20 @@ func (s *PostgresStore) MarkTokenUsed(ctx context.Context, tokenHash []byte) err
 	return nil
 }
 
+// SetEmailConfirmedAt sets email_confirmed_at = NOW() for userID if not already confirmed.
+func (s *PostgresStore) SetEmailConfirmedAt(ctx context.Context, userID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE users
+		SET email_confirmed_at = NOW()
+		WHERE id = $1
+			AND email_confirmed_at IS NULL
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("updating email_confirmed_at: %w", err)
+	}
+	return nil
+}
+
 // CleanupExpiredSessions deletes sessions expired before retention cutoff.
 // Pass a grace window (e.g. 7*24*time.Hour) to retain sessions for audit before deletion.
 // Returns rows deleted.
