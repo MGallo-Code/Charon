@@ -221,6 +221,25 @@ func (s *PostgresStore) GetTokenByHash(ctx context.Context, tokenHash []byte, to
 	return token, nil
 }
 
+// MarkTokenUsed sets used_at = NOW() for the token with the given hash.
+// Returns pgx.ErrNoRows if no matching unused token exists (already used or never existed).
+// Call only after verifying the token -- prevents double-use.
+func (s *PostgresStore) MarkTokenUsed(ctx context.Context, tokenHash []byte) error {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE tokens
+		SET used_at = NOW()
+		WHERE token_hash = $1
+			AND used_at IS NULL
+	`, tokenHash)
+	if err != nil {
+		return fmt.Errorf("marking token as used: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("marking token as used: %w", pgx.ErrNoRows)
+	}
+	return nil
+}
+
 // CleanupExpiredSessions deletes sessions expired before retention cutoff.
 // Pass a grace window (e.g. 7*24*time.Hour) to retain sessions for audit before deletion.
 // Returns rows deleted.
