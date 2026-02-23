@@ -811,3 +811,73 @@ func TestDeleteAllUserSessionsPG(t *testing.T) {
 		}
 	})
 }
+
+// --- SetEmailConfirmedAt ---
+
+func TestSetEmailConfirmedAt(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("sets email_confirmed_at for unconfirmed user", func(t *testing.T) {
+		email := "confirm_email@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		id := mustCreateUser(t, ctx, email, "fakehash")
+
+		if err := testStore.SetEmailConfirmedAt(ctx, id); err != nil {
+			t.Fatalf("SetEmailConfirmedAt failed: %v", err)
+		}
+
+		var confirmedAt *time.Time
+		err := testStore.pool.QueryRow(ctx, `
+			SELECT email_confirmed_at FROM users WHERE id = $1
+		`, id).Scan(&confirmedAt)
+		if err != nil {
+			t.Fatalf("failed to query email_confirmed_at: %v", err)
+		}
+		if confirmedAt == nil {
+			t.Error("email_confirmed_at should be set, got NULL")
+		}
+	})
+
+	t.Run("idempotent -- does not overwrite existing timestamp", func(t *testing.T) {
+		email := "confirm_email_idem@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		id := mustCreateUser(t, ctx, email, "fakehash")
+
+		// First call -- sets the timestamp
+		if err := testStore.SetEmailConfirmedAt(ctx, id); err != nil {
+			t.Fatalf("first SetEmailConfirmedAt failed: %v", err)
+		}
+
+		var first time.Time
+		if err := testStore.pool.QueryRow(ctx, `
+			SELECT email_confirmed_at FROM users WHERE id = $1
+		`, id).Scan(&first); err != nil {
+			t.Fatalf("failed to query first timestamp: %v", err)
+		}
+
+		// Second call -- should be a no-op
+		if err := testStore.SetEmailConfirmedAt(ctx, id); err != nil {
+			t.Fatalf("second SetEmailConfirmedAt failed: %v", err)
+		}
+
+		var second time.Time
+		if err := testStore.pool.QueryRow(ctx, `
+			SELECT email_confirmed_at FROM users WHERE id = $1
+		`, id).Scan(&second); err != nil {
+			t.Fatalf("failed to query second timestamp: %v", err)
+		}
+
+		if !first.Equal(second) {
+			t.Errorf("timestamp was overwritten: first %v, second %v", first, second)
+		}
+	})
+
+	t.Run("no error for nonexistent user", func(t *testing.T) {
+		id, _ := uuid.NewV7()
+		if err := testStore.SetEmailConfirmedAt(ctx, id); err != nil {
+			t.Errorf("expected no error for nonexistent user, got: %v", err)
+		}
+	})
+}
