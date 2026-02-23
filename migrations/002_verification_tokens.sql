@@ -23,4 +23,5 @@ CREATE TABLE IF NOT EXISTS tokens (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_tokens_user_id ON tokens (user_id);
+-- improve performance when invalidating old tokens and/or on delete cascade for user deletion
+CREATE INDEX IF NOT EXISTS idx_tokens_user_id_type ON tokens (user_id, token_type);
