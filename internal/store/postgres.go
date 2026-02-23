@@ -61,19 +61,17 @@ func (s *PostgresStore) CreateUserByEmail(ctx context.Context, id uuid.UUID, ema
 // Returns pgx.ErrNoRows if no user exists with that email.
 func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	// Initialize user pointer
-	user := &User{}
+	user := &User{
+		Email: &email,
+	}
 
 	// Query db for user info where email matches
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, created_at, updated_at,
-			email_confirmed_at, phone, phone_confirmed_at,
-			first_name, last_name, oauth_provider, oauth_provider_id, avatar_url
+		SELECT id, password_hash, email_confirmed_at
 		FROM users
 		WHERE email = $1;
 	`, email).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt,
-		&user.EmailConfirmedAt, &user.Phone, &user.PhoneConfirmedAt,
-		&user.FirstName, &user.LastName, &user.OAuthProvider, &user.OAuthProviderID, &user.AvatarURL,
+		&user.ID, &user.PasswordHash, &user.EmailConfirmedAt,
 	)
 
 	// If err, return it
@@ -85,32 +83,19 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 	return user, nil
 }
 
-// GetUserByID fetches user by UUID.
+// GetPwdHashByUserID fetches Argon2id password hash for the given user.
 // Returns pgx.ErrNoRows if no user exists with that ID.
-func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
-	// Init user var
-	user := &User{}
-
-	// Attempt to fetch user by ID
+func (s *PostgresStore) GetPwdHashByUserID(ctx context.Context, id uuid.UUID) (string, error) {
+	var passwordHash string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, created_at, updated_at,
-			email_confirmed_at, phone, phone_confirmed_at,
-			first_name, last_name, oauth_provider, oauth_provider_id, avatar_url
+		SELECT password_hash
 		FROM users
 		WHERE id = $1
-	`, id).Scan(
-		&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt,
-		&user.EmailConfirmedAt, &user.Phone, &user.PhoneConfirmedAt,
-		&user.FirstName, &user.LastName, &user.OAuthProvider, &user.OAuthProviderID, &user.AvatarURL,
-	)
-
-	// If an error, return it
+	`, id).Scan(&passwordHash)
 	if err != nil {
-		return nil, fmt.Errorf("fetching user by id: %w", err)
+		return "", fmt.Errorf("fetching password hash by user id: %w", err)
 	}
-
-	// Otherwise return user!
-	return user, nil
+	return passwordHash, nil
 }
 
 // UpdateUserPassword replaces the stored Argon2id hash for the given user.
@@ -119,8 +104,7 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 func (s *PostgresStore) UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
 	result, err := s.pool.Exec(ctx, `
 		UPDATE users
-		SET
-			password_hash = $2,
+		SET password_hash = $2,
 			updated_at = NOW()
 		WHERE id = $1
 	`, id, passwordHash)
@@ -155,17 +139,16 @@ func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID 
 // Returns pgx.ErrNoRows if no valid session exists with that hash.
 func (s *PostgresStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*Session, error) {
 	// Init sesh obj..
-	session := &Session{}
+	session := &Session{
+		TokenHash: tokenHash,
+	}
 	// Fetch matching NON-EXPIRED sessions
 	err := s.pool.QueryRow(ctx, `
-		SELECT
-			id, user_id, token_hash, csrf_token, expires_at, ip_address, user_agent, created_at
+		SELECT id, user_id, csrf_token, expires_at
 		FROM sessions
-		WHERE
-			token_hash = $1
+		WHERE token_hash = $1
 			AND expires_at > NOW()
-	`, tokenHash).Scan(&session.ID, &session.UserID, &session.TokenHash, &session.CSRFToken, &session.ExpiresAt,
-		&session.IPAddress, &session.UserAgent, &session.CreatedAt)
+	`, tokenHash).Scan(&session.ID, &session.UserID, &session.CSRFToken, &session.ExpiresAt)
 	if err != nil {
 		return nil, fmt.Errorf("fetching session by token hash: %w", err)
 	}
