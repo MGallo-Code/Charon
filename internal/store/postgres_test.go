@@ -708,6 +708,63 @@ func TestGetTokenByHash(t *testing.T) {
 	})
 }
 
+// --- MarkTokenUsed ---
+
+func TestMarkTokenUsed(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("sets used_at on valid unused token", func(t *testing.T) {
+		email := "token_mark_used@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-mark-used"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
+
+		if err := testStore.MarkTokenUsed(ctx, tokenHash[:]); err != nil {
+			t.Fatalf("MarkTokenUsed failed: %v", err)
+		}
+
+		// Verify used_at is now set
+		var usedAt *time.Time
+		err := testStore.pool.QueryRow(ctx,
+			"SELECT used_at FROM tokens WHERE token_hash = $1", tokenHash[:],
+		).Scan(&usedAt)
+		if err != nil {
+			t.Fatalf("querying token: %v", err)
+		}
+		if usedAt == nil {
+			t.Error("used_at should be set after MarkTokenUsed")
+		}
+	})
+
+	t.Run("returns error for already used token", func(t *testing.T) {
+		email := "token_double_use@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-double-use"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
+
+		if err := testStore.MarkTokenUsed(ctx, tokenHash[:]); err != nil {
+			t.Fatalf("first MarkTokenUsed failed: %v", err)
+		}
+
+		err := testStore.MarkTokenUsed(ctx, tokenHash[:])
+		if err == nil {
+			t.Fatal("expected error marking already-used token, got nil")
+		}
+	})
+
+	t.Run("returns error for nonexistent hash", func(t *testing.T) {
+		fakeHash := sha256.Sum256([]byte("nonexistent-token-mark"))
+		err := testStore.MarkTokenUsed(ctx, fakeHash[:])
+		if err == nil {
+			t.Fatal("expected error for nonexistent token hash, got nil")
+		}
+	})
+}
+
 // --- DeleteAllUserSessions (Postgres) ---
 
 func TestDeleteAllUserSessionsPG(t *testing.T) {
