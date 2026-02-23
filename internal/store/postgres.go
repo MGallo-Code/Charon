@@ -198,6 +198,29 @@ func (s *PostgresStore) CreateToken(ctx context.Context, id, userID uuid.UUID, t
 	return nil
 }
 
+// GetTokenByHash fetches a token row by its SHA-256 hash.
+// Returns pgx.ErrNoRows if not found, expired, or already used.
+// Validates expires_at > NOW() and used_at IS NULL in the query -- never returns a stale token.
+func (s *PostgresStore) GetTokenByHash(ctx context.Context, tokenHash []byte, tokenType string) (*Token, error) {
+	// init token
+	token := &Token{
+		TokenType: tokenType,
+		TokenHash: tokenHash,
+	}
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, user_id, used_at, expires_at
+		FROM tokens
+		WHERE token_hash = $1
+			AND token_type = $2
+			AND used_at IS NULL
+			AND expires_at > NOW()
+	`, tokenHash, tokenType).Scan(&token.ID, &token.UserID, &token.UsedAt, &token.ExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("fetching token by token hash: %w", err)
+	}
+	return token, nil
+}
+
 // CleanupExpiredSessions deletes sessions expired before retention cutoff.
 // Pass a grace window (e.g. 7*24*time.Hour) to retain sessions for audit before deletion.
 // Returns rows deleted.
