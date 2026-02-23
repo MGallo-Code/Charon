@@ -161,40 +161,30 @@ func TestGetUserByEmail(t *testing.T) {
 	})
 }
 
-// --- GetUserByID ---
+// --- GetPwdHashByUserID ---
 
-func TestGetUserByID(t *testing.T) {
+func TestGetPwdHashByUserID(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("returns correct user", func(t *testing.T) {
-		email := "get_by_id@example.com"
+	t.Run("returns correct password hash", func(t *testing.T) {
+		email := "get_pwd_hash@example.com"
 		hash := "argon2id$fakehash"
 		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
 
-		// Create user w/ email
 		id := mustCreateUser(t, ctx, email, hash)
 
-		// Attempt to get user by ID
-		user, err := testStore.GetUserByID(ctx, id)
+		got, err := testStore.GetPwdHashByUserID(ctx, id)
 		if err != nil {
-			t.Fatalf("GetUserByID failed: %v", err)
+			t.Fatalf("GetPwdHashByUserID failed: %v", err)
 		}
-
-		// Validate returned user vals
-		if user.ID != id {
-			t.Errorf("id: expected %v, got %v", id, user.ID)
-		}
-		if user.Email == nil || *user.Email != email {
-			t.Errorf("email: expected %q, got %v", email, user.Email)
-		}
-		if user.PasswordHash != hash {
-			t.Errorf("password_hash: expected %q, got %q", hash, user.PasswordHash)
+		if got != hash {
+			t.Errorf("password_hash: expected %q, got %q", hash, got)
 		}
 	})
 
 	t.Run("returns error for nonexistent ID", func(t *testing.T) {
 		fakeID, _ := uuid.NewV7()
-		_, err := testStore.GetUserByID(ctx, fakeID)
+		_, err := testStore.GetPwdHashByUserID(ctx, fakeID)
 		if err == nil {
 			t.Fatal("expected error for nonexistent ID, got nil")
 		}

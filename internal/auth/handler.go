@@ -42,8 +42,8 @@ type Store interface {
 	// GetUserByEmail fetches user by email for login verification.
 	GetUserByEmail(ctx context.Context, email string) (*store.User, error)
 
-	// GetUserByID fetches user by UUID. Used when user_id is in context but email is not.
-	GetUserByID(ctx context.Context, id uuid.UUID) (*store.User, error)
+	// GetPwdHashByUserID fetches Argon2id hash for password verification.
+	GetPwdHashByUserID(ctx context.Context, id uuid.UUID) (string, error)
 
 	// UpdateUserPassword attempts to update the password of user attached to given id.
 	UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error
@@ -353,13 +353,12 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch user by ID to get their stored password hash.
-	user, err := h.PS.GetUserByID(r.Context(), id)
+	// Fetch stored hash for current password verification.
+	passwordHash, err := h.PS.GetPwdHashByUserID(r.Context(), id)
 	if err != nil {
 		InternalServerError(w, r, err)
 		return
 	}
-	passwordHash := user.PasswordHash
 
 	// Verify current_password against the stored hash.
 	pwdMatch, err := VerifyPassword(pwdChangeInput.CurrentPassword, passwordHash)

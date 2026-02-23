@@ -25,7 +25,7 @@ type MockStore struct {
 	// Error injection...zero value means no error
 	CreateUserErr         error
 	GetUserByEmailErr     error
-	GetUserByIDErr        error
+	GetPwdHashByUserIDErr error
 	CreateSessionErr      error
 	GetSessionErr         error
 	UpdateUserPasswordErr error
@@ -69,24 +69,18 @@ func (m *MockStore) GetUserByEmail(_ context.Context, email string) (*store.User
 	return u, nil
 }
 
-func (m *MockStore) GetUserByID(_ context.Context, id uuid.UUID) (*store.User, error) {
-	if m.GetUserByIDErr != nil {
-		return nil, m.GetUserByIDErr
+func (m *MockStore) GetPwdHashByUserID(_ context.Context, id uuid.UUID) (string, error) {
+	if m.GetPwdHashByUserIDErr != nil {
+		return "", m.GetPwdHashByUserIDErr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Loop through users, try to find matching id
-	var user *store.User
 	for _, u := range m.Users {
 		if u.ID == id {
-			user = u
-			break
+			return u.PasswordHash, nil
 		}
 	}
-	if user == nil {
-		return nil, fmt.Errorf("fetching user by id: %w", pgx.ErrNoRows)
-	}
-	return user, nil
+	return "", fmt.Errorf("fetching password hash by user id: %w", pgx.ErrNoRows)
 }
 
 func (m *MockStore) UpdateUserPassword(_ context.Context, id uuid.UUID, passwordHash string) error {

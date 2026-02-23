@@ -730,9 +730,9 @@ func TestPasswordChange(t *testing.T) {
 
 	// -- Store errors (500s) --
 
-	t.Run("GetUserByID failure returns InternalServerError", func(t *testing.T) {
+	t.Run("GetPwdHashByUserID failure returns InternalServerError", func(t *testing.T) {
 		h := AuthHandler{
-			PS: &testutil.MockStore{GetUserByIDErr: errors.New("database connection failed")},
+			PS: &testutil.MockStore{GetPwdHashByUserIDErr: errors.New("database connection failed")},
 			RS: testutil.NewMockCache(),
 		}
 
