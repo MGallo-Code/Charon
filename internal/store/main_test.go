@@ -85,3 +85,16 @@ func mustCreateSession(t *testing.T, ctx context.Context, userID uuid.UUID, toke
 	}
 	return id
 }
+
+// Creates a token in db for given user, returns token ID
+func mustCreateToken(t *testing.T, ctx context.Context, userID uuid.UUID, tokenType string, tokenHash []byte, expiresAt time.Time) uuid.UUID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("failed to generate token UUID: %v", err)
+	}
+	if err := testStore.CreateToken(ctx, id, userID, tokenType, tokenHash, expiresAt); err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	return id
+}

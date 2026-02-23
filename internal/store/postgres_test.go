@@ -616,6 +616,98 @@ func TestCreateToken(t *testing.T) {
 	})
 }
 
+// --- GetTokenByHash ---
+
+func TestGetTokenByHash(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns valid token", func(t *testing.T) {
+		email := "token_get@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-get"))
+		expiresAt := time.Now().Add(1 * time.Hour).Truncate(time.Microsecond)
+		tokenID := mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], expiresAt)
+
+		token, err := testStore.GetTokenByHash(ctx, tokenHash[:], "password_reset")
+		if err != nil {
+			t.Fatalf("GetTokenByHash failed: %v", err)
+		}
+
+		if token.ID != tokenID {
+			t.Errorf("id: expected %v, got %v", tokenID, token.ID)
+		}
+		if token.UserID != userID {
+			t.Errorf("user_id: expected %v, got %v", userID, token.UserID)
+		}
+		if token.UsedAt != nil {
+			t.Error("used_at should be nil for a fresh token")
+		}
+		if !token.ExpiresAt.Equal(expiresAt) {
+			t.Errorf("expires_at: expected %v, got %v", expiresAt, token.ExpiresAt)
+		}
+	})
+
+	t.Run("does not return expired token", func(t *testing.T) {
+		email := "token_expired@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-expired"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(-1*time.Hour))
+
+		_, err := testStore.GetTokenByHash(ctx, tokenHash[:], "password_reset")
+		if err == nil {
+			t.Fatal("expected error for expired token, got nil")
+		}
+	})
+
+	t.Run("does not return used token", func(t *testing.T) {
+		email := "token_used@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-used"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
+
+		// Mark used directly -- MarkTokenUsed not yet implemented
+		_, err := testStore.pool.Exec(ctx, `
+			UPDATE tokens SET used_at = NOW() WHERE token_hash = $1
+		`, tokenHash[:])
+		if err != nil {
+			t.Fatalf("marking token used: %v", err)
+		}
+
+		_, err = testStore.GetTokenByHash(ctx, tokenHash[:], "password_reset")
+		if err == nil {
+			t.Fatal("expected error for used token, got nil")
+		}
+	})
+
+	t.Run("does not return token of wrong type", func(t *testing.T) {
+		email := "token_wrong_type@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-token-wrong-type"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
+
+		_, err := testStore.GetTokenByHash(ctx, tokenHash[:], "email_verification")
+		if err == nil {
+			t.Fatal("expected error when querying with wrong token type, got nil")
+		}
+	})
+
+	t.Run("returns error for nonexistent hash", func(t *testing.T) {
+		fakeHash := sha256.Sum256([]byte("nonexistent-token"))
+		_, err := testStore.GetTokenByHash(ctx, fakeHash[:], "password_reset")
+		if err == nil {
+			t.Fatal("expected error for nonexistent token hash, got nil")
+		}
+	})
+}
+
 // --- DeleteAllUserSessions (Postgres) ---
 
 func TestDeleteAllUserSessionsPG(t *testing.T) {
