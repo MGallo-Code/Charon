@@ -1,11 +1,12 @@
 // redis.go
 
-// go-redis client for session caching.
+// go-redis client for session caching and rate limiting.
 package store
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,33 +14,33 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// NewRedisClient parses redisURL, connects, and pings to verify connectivity.
+// Returns a shared client to pass to NewRedisStore and NewRedisRateLimiter.
+// Call once at startup -- caller is responsible for closing the client.
+func NewRedisClient(ctx context.Context, redisURL string) (*redis.Client, error) {
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing redis url: %w", err)
+	}
+	rdb := redis.NewClient(opt)
+	if err = rdb.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("pinging redis: %w", err)
+	}
+	return rdb, nil
+}
+
 // RedisStore wraps Redis client for session cache operations.
 type RedisStore struct {
 	rdb *redis.Client
 }
 
-// NewRedisStore connects to Redis and returns ready-to-use store.
-// Pings Redis to verify connectivity before returning.
-// Call once at startup...returned store is safe for concurrent use.
-func NewRedisStore(ctx context.Context, redisURL string) (*RedisStore, error) {
-	// Parse redisURL to get option values, if err return it
-	opt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		return nil, fmt.Errorf("parsing redis db url: %w", err)
-	}
-
-	// Create new redis client
-	rdb := redis.NewClient(opt)
-
-	// Try and test client to ensure it works correctly
-	if err = rdb.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("pinging redis: %w", err)
-	}
-
-	return &RedisStore{rdb}, nil
+// NewRedisStore wraps an existing Redis client for session cache operations.
+// Client lifecycle (Close) is managed by the caller.
+func NewRedisStore(rdb *redis.Client) *RedisStore {
+	return &RedisStore{rdb}
 }
 
-// Close shuts down Redis client and releases all resources.
+// Close shuts down the underlying Redis client and releases all resources.
 func (s *RedisStore) Close() error {
 	if err := s.rdb.Close(); err != nil {
 		return fmt.Errorf("closing redis: %w", err)
@@ -149,6 +150,61 @@ func (s *RedisStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID
 	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("deleting user sessions: %w", err)
+	}
+	return nil
+}
+
+// RedisRateLimiter implements auth.RateLimiter using Redis counters and lockout keys.
+// Holds a reference to the shared Redis client -- does not own its lifecycle.
+type RedisRateLimiter struct {
+	rdb *redis.Client
+}
+
+// NewRedisRateLimiter wraps an existing Redis client for rate limiting operations.
+// Client lifecycle (Close) is managed by the caller.
+func NewRedisRateLimiter(rdb *redis.Client) *RedisRateLimiter {
+	return &RedisRateLimiter{rdb}
+}
+
+// Allow checks whether the action identified by key is within policy limits.
+// Returns nil if the attempt is allowed; non-nil error if locked out or threshold exceeded.
+// Two Redis keys per action:
+//   - "rl:counter:{key}" -- attempt counter, expires after policy.Window
+//   - "rl:lockout:{key}" -- lockout flag, expires after policy.LockoutTTL
+//
+// Check lockout key first (fast reject if already blocked).
+// Increment counter; on first increment, set TTL to policy.Window.
+// When counter reaches policy.MaxAttempts, write lockout key with TTL = policy.LockoutTTL.
+func (r *RedisRateLimiter) Allow(ctx context.Context, key string, policy RateLimit) error {
+	lockoutKey := fmt.Sprintf("rl:lockout:%s", key)
+
+	// Fast reject if already locked out
+	err := r.rdb.Get(ctx, lockoutKey).Err()
+	if err == nil {
+		return ErrRateLimitExceeded
+	}
+	if !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("checking rate limit lockout: %w", err)
+	}
+
+	counterKey := fmt.Sprintf("rl:counter:%s", key)
+
+	// Increment attempt counter
+	count, err := r.rdb.Incr(ctx, counterKey).Result()
+	if err != nil {
+		return fmt.Errorf("incrementing rate limit counter: %w", err)
+	}
+	// First attempt in window -- set expiry so counter resets after Window
+	if count == 1 {
+		if err := r.rdb.ExpireNX(ctx, counterKey, policy.Window).Err(); err != nil {
+			return fmt.Errorf("setting rate limit window: %w", err)
+		}
+	}
+	// Threshold reached -- write lockout key
+	if count >= int64(policy.MaxAttempts) {
+		if err := r.rdb.Set(ctx, lockoutKey, "", policy.LockoutTTL).Err(); err != nil {
+			return fmt.Errorf("setting rate limit lockout: %w", err)
+		}
 	}
 	return nil
 }
