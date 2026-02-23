@@ -8,9 +8,10 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/mail"
+	netmail "net/mail"
 	"time"
 
+	"github.com/MGallo-Code/charon/internal/mail"
 	"github.com/MGallo-Code/charon/internal/store"
 	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5"
@@ -79,6 +80,7 @@ type AuthHandler struct {
 	PS Store
 	RS SessionCache
 	RL RateLimiter
+	ML mail.Mailer
 }
 
 // RegisterByEmail handles POST /register — email + password signup.
@@ -110,7 +112,7 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "Email too long!")
 		return
 	}
-	if _, err := mail.ParseAddress(registerInput.Email); err != nil {
+	if _, err := netmail.ParseAddress(registerInput.Email); err != nil {
 		BadRequest(w, r, "Invalid email format")
 		return
 	}
@@ -328,6 +330,25 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"message":"logged out"}`))
 }
+
+// LoginEmailPolicy is the rate limit applied per email address on login attempts.
+// Applied in LoginByEmail before any DB work -- rejected requests never reach Argon2id.
+var LoginEmailPolicy = store.RateLimit{
+	MaxAttempts: 10,
+	Window:      10 * time.Minute,
+	LockoutTTL:  15 * time.Minute,
+}
+
+// PasswordResetPolicy is the rate limit applied per user on password reset requests.
+// Applied in PasswordReset after user lookup, keyed on "reset:user:<userID>".
+var PasswordResetPolicy = store.RateLimit{
+	MaxAttempts: 3,
+	Window:      1 * time.Hour,
+	LockoutTTL:  1 * time.Hour,
+}
+
+// TODO: LoginByEmail -- add h.RL.Allow(ctx, "login:email:"+email, LoginEmailPolicy) after input
+// decode and before GetUserByEmail. Return 429 on ErrRateLimitExceeded.
 
 // PasswordChange handles POST /password/change...updates the authenticated user's password.
 // Verifies current password, re-hashes the new one, then invalidates all sessions.
