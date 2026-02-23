@@ -13,6 +13,7 @@ import (
 // Shared test connections for the store package
 var testStore *PostgresStore
 var testRedis *RedisStore
+var testRateLimiter *RedisRateLimiter
 
 // TestMain sets up Postgres + Redis, runs all store tests, tears down
 func TestMain(m *testing.M) {
@@ -41,6 +42,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	testRedis = NewRedisStore(rdb)
+	testRateLimiter = NewRedisRateLimiter(rdb)
 
 	// Run tests :))
 	code := m.Run()

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -181,6 +183,145 @@ func TestDeleteAllUserSessions(t *testing.T) {
 		_, err = testRedis.GetSession(ctx, hashOther)
 		if err != nil {
 			t.Errorf("other user's session should not be deleted: %v", err)
+		}
+	})
+}
+
+// --- Allow ---
+
+// cleanupRateLimit deletes counter and lockout keys for the given rate limit key.
+func cleanupRateLimit(t *testing.T, ctx context.Context, key string) {
+	t.Helper()
+	testRedis.rdb.Del(ctx,
+		fmt.Sprintf("rl:counter:%s", key),
+		fmt.Sprintf("rl:lockout:%s", key),
+	)
+}
+
+func TestAllow(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("allows first attempt", func(t *testing.T) {
+		key := "test:allow:first_attempt"
+		policy := RateLimit{MaxAttempts: 3, Window: time.Minute, LockoutTTL: 5 * time.Minute}
+		t.Cleanup(func() { cleanupRateLimit(t, ctx, key) })
+
+		if err := testRateLimiter.Allow(ctx, key, policy); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("allows attempts under threshold", func(t *testing.T) {
+		key := "test:allow:under_threshold"
+		policy := RateLimit{MaxAttempts: 3, Window: time.Minute, LockoutTTL: 5 * time.Minute}
+		t.Cleanup(func() { cleanupRateLimit(t, ctx, key) })
+
+		// Two attempts (below MaxAttempts=3) should all pass
+		for i := 0; i < 2; i++ {
+			if err := testRateLimiter.Allow(ctx, key, policy); err != nil {
+				t.Fatalf("attempt %d: expected nil, got %v", i+1, err)
+			}
+		}
+	})
+
+	t.Run("threshold attempt is allowed but sets lockout", func(t *testing.T) {
+		key := "test:allow:threshold"
+		policy := RateLimit{MaxAttempts: 3, Window: time.Minute, LockoutTTL: 5 * time.Minute}
+		t.Cleanup(func() { cleanupRateLimit(t, ctx, key) })
+
+		// Hit MaxAttempts -- all should return nil
+		for i := 0; i < 3; i++ {
+			if err := testRateLimiter.Allow(ctx, key, policy); err != nil {
+				t.Fatalf("attempt %d: expected nil, got %v", i+1, err)
+			}
+		}
+
+		// Lockout key must exist after the final allowed attempt
+		if err := testRedis.rdb.Get(ctx, fmt.Sprintf("rl:lockout:%s", key)).Err(); err != nil {
+			t.Errorf("expected lockout key after threshold: %v", err)
+		}
+	})
+
+	t.Run("blocks after threshold", func(t *testing.T) {
+		key := "test:allow:blocked"
+		policy := RateLimit{MaxAttempts: 3, Window: time.Minute, LockoutTTL: 5 * time.Minute}
+		t.Cleanup(func() { cleanupRateLimit(t, ctx, key) })
+
+		// Reach threshold (3 allowed attempts sets lockout)
+		for i := 0; i < 3; i++ {
+			testRateLimiter.Allow(ctx, key, policy)
+		}
+
+		// Next attempt must be rejected
+		if err := testRateLimiter.Allow(ctx, key, policy); !errors.Is(err, ErrRateLimitExceeded) {
+			t.Errorf("expected ErrRateLimitExceeded, got %v", err)
+		}
+	})
+
+	t.Run("counter resets after window expires", func(t *testing.T) {
+		key := "test:allow:window_reset"
+		policy := RateLimit{MaxAttempts: 3, Window: 2 * time.Second, LockoutTTL: 5 * time.Minute}
+		t.Cleanup(func() { cleanupRateLimit(t, ctx, key) })
+
+		// One attempt -- counter=1, below threshold, no lockout written
+		if err := testRateLimiter.Allow(ctx, key, policy); err != nil {
+			t.Fatalf("initial attempt: expected nil, got %v", err)
+		}
+
+		// Wait for window to expire
+		time.Sleep(3 * time.Second)
+
+		// Counter gone; fresh window, first attempt allowed
+		if err := testRateLimiter.Allow(ctx, key, policy); err != nil {
+			t.Errorf("after window reset: expected nil, got %v", err)
+		}
+	})
+
+	t.Run("lockout expires after LockoutTTL", func(t *testing.T) {
+		key := "test:allow:lockout_expiry"
+		// Short window + lockout so both expire before the second phase, giving a clean reset
+		policy := RateLimit{MaxAttempts: 2, Window: 2 * time.Second, LockoutTTL: 2 * time.Second}
+		t.Cleanup(func() { cleanupRateLimit(t, ctx, key) })
+
+		// Hit threshold -- triggers lockout
+		testRateLimiter.Allow(ctx, key, policy)
+		testRateLimiter.Allow(ctx, key, policy)
+
+		// Confirm blocked
+		if err := testRateLimiter.Allow(ctx, key, policy); !errors.Is(err, ErrRateLimitExceeded) {
+			t.Fatalf("expected ErrRateLimitExceeded immediately after threshold, got %v", err)
+		}
+
+		// Wait for both lockout and counter window to expire
+		time.Sleep(3 * time.Second)
+
+		// First attempt after full expiry should be allowed
+		if err := testRateLimiter.Allow(ctx, key, policy); err != nil {
+			t.Errorf("after lockout expiry: expected nil, got %v", err)
+		}
+	})
+
+	t.Run("independent keys don't share state", func(t *testing.T) {
+		keyA := "test:allow:independent_a"
+		keyB := "test:allow:independent_b"
+		policy := RateLimit{MaxAttempts: 2, Window: time.Minute, LockoutTTL: 5 * time.Minute}
+		t.Cleanup(func() {
+			cleanupRateLimit(t, ctx, keyA)
+			cleanupRateLimit(t, ctx, keyB)
+		})
+
+		// Lock out keyA
+		testRateLimiter.Allow(ctx, keyA, policy)
+		testRateLimiter.Allow(ctx, keyA, policy)
+
+		// keyA is locked
+		if err := testRateLimiter.Allow(ctx, keyA, policy); !errors.Is(err, ErrRateLimitExceeded) {
+			t.Errorf("keyA: expected ErrRateLimitExceeded, got %v", err)
+		}
+
+		// keyB is unaffected
+		if err := testRateLimiter.Allow(ctx, keyB, policy); err != nil {
+			t.Errorf("keyB: expected nil, got %v", err)
 		}
 	})
 }
