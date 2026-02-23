@@ -182,6 +182,22 @@ func (s *PostgresStore) DeleteAllUserSessions(ctx context.Context, userID uuid.U
 	return nil
 }
 
+// CreateToken inserts a new verification token row.
+// Caller generates the UUID, hashes the raw token (SHA-256), and sets expires_at.
+// tokenType must be a valid CHECK value ('password_reset', 'email_verification').
+func (s *PostgresStore) CreateToken(ctx context.Context, id, userID uuid.UUID, tokenType string, tokenHash []byte, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO tokens
+			(id, user_id, token_type, token_hash, expires_at, created_at)
+		VALUES
+			($1, $2, $3, $4, $5, NOW())
+	`, id, userID, tokenType, tokenHash, expiresAt)
+	if err != nil {
+		return fmt.Errorf("inserting token: %w", err)
+	}
+	return nil
+}
+
 // CleanupExpiredSessions deletes sessions expired before retention cutoff.
 // Pass a grace window (e.g. 7*24*time.Hour) to retain sessions for audit before deletion.
 // Returns rows deleted.
