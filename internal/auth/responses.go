@@ -1,10 +1,9 @@
 // responses.go -- Package-wide HTTP response helpers.
-//
-// Shared by handlers and middleware. All messages are plain ASCII - no
-// user-controlled input is interpolated, so string concat is safe here.
+// Shared by handlers and middleware.
 package auth
 
 import (
+	"encoding/json"
 	"net/http"
 )
 
@@ -22,7 +21,9 @@ func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	w.Write([]byte(`{"message":"` + message + `"}`))
+	json.NewEncoder(w).Encode(struct {
+		Message string `json:"message"`
+	}{message})
 }
 
 // Unauthorized returns a 401 JSON response with a generic message.
