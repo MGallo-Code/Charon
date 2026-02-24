@@ -64,6 +64,18 @@ type RateLimit struct {
 	LockoutTTL  time.Duration // how long to block after MaxAttempts is hit
 }
 
+// AuditEntry represents a row in the audit_logs table.
+// UserID is nil for pre-auth failures where no user is identified.
+// IPAddress and UserAgent are nil for server-side or admin-triggered events.
+// Metadata holds optional event context as a raw JSON blob (e.g. session_id, token_type).
+type AuditEntry struct {
+	UserID    *uuid.UUID
+	Action    string
+	IPAddress *string
+	UserAgent *string
+	Metadata  []byte
+}
+
 // Token represents a row in the tokens table.
 // TokenType is constrained by DB CHECK ('password_reset', 'email_verification').
 // UsedAt is nil until consumed; set once on use to prevent replay.
