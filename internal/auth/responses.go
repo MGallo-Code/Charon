@@ -13,7 +13,9 @@ func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
 	logError(r, "internal server error", "error", err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusInternalServerError)
-	w.Write([]byte(`{"message":"internal server error"}`))
+	json.NewEncoder(w).Encode(struct {
+		Message string `json:"message"`
+	}{"internal server error"})
 }
 
 // BadRequest returns a 400 JSON response with the given message.
@@ -41,7 +43,9 @@ func Unauthorized(w http.ResponseWriter, r *http.Request, message string) {
 func Forbidden(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	w.Write([]byte(`{"message":"forbidden"}`))
+	json.NewEncoder(w).Encode(struct {
+		Message string `json:"message"`
+	}{"forbidden"})
 }
 
 // OK returns a 200 JSON response with the given message.
