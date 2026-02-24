@@ -294,6 +294,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	userID, ok := UserIDFromContext(r.Context())
 	if !ok {
+		logError(r, "logout-all called without user_id in context")
 		InternalServerError(w, r, errors.New("missing session context"))
 		return
 	}
