@@ -109,7 +109,7 @@ func TestWiring_LoginCookieWorksWithRequireAuth(t *testing.T) {
 	// Create cache
 	mc := testutil.NewMockCache()
 	// Create handler
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Attempt login
 	loginW := doLogin(t, h, email, "password123")
@@ -146,7 +146,7 @@ func TestWiring_LoginCSRFTokenWorksWithCSRFMiddleware(t *testing.T) {
 	// Create cache
 	mc := testutil.NewMockCache()
 	// Create hander
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Attempt login
 	loginW := doLogin(t, h, email, "password123")
@@ -182,7 +182,7 @@ func TestWiring_WrongCSRFTokenIsRejected(t *testing.T) {
 	ms := testutil.NewMockStore(user)
 	mc := testutil.NewMockCache()
 	// Create handler
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Login, get session1 cookie session token
 	loginW1 := doLogin(t, h, email, "password123")
@@ -212,7 +212,7 @@ func TestWiring_RequireAuthContextWorksWithLogoutAll(t *testing.T) {
 	user, email := newUserWithPassword(t, "password123")
 	ms := testutil.NewMockStore(user)
 	mc := testutil.NewMockCache()
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Two logins — two sessions for the same user.
 	doLogin(t, h, email, "password123")
@@ -248,7 +248,7 @@ func TestWiring_RequireAuthContextWorksWithLogout(t *testing.T) {
 	ms := testutil.NewMockStore(user)
 	mc := testutil.NewMockCache()
 	// Create handler
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Login user, get session cookie
 	loginW := doLogin(t, h, email, "password123")
@@ -295,7 +295,7 @@ func TestWiring_PasswordChange_WorksWithRequireAuth(t *testing.T) {
 	user, email := newUserWithPassword(t, "oldpassword1")
 	ms := testutil.NewMockStore(user)
 	mc := testutil.NewMockCache()
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	loginW := doLogin(t, h, email, "oldpassword1")
 	cookie := getSessionCookie(t, loginW)
@@ -320,7 +320,7 @@ func TestWiring_PasswordChange_OldPasswordRejectedAfterChange(t *testing.T) {
 	user, email := newUserWithPassword(t, "oldpassword1")
 	ms := testutil.NewMockStore(user)
 	mc := testutil.NewMockCache()
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Change password
 	loginW := doLogin(t, h, email, "oldpassword1")
@@ -352,7 +352,7 @@ func TestWiring_PasswordChange_DoesNotAffectOtherUser(t *testing.T) {
 	userB, emailB := newUser(t, "b@example.com", "passwordB1")
 	ms := testutil.NewMockStore(userA, userB)
 	mc := testutil.NewMockCache()
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Both users log in
 	doLogin(t, h, emailB, "passwordB1")
@@ -390,7 +390,7 @@ func TestWiring_LogoutAll_DoesNotAffectOtherUser(t *testing.T) {
 	userB, _ := newUser(t, "b@example.com", "passwordB1")
 	ms := testutil.NewMockStore(userA, userB)
 	mc := testutil.NewMockCache()
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Both users log in
 	doLogin(t, h, "b@example.com", "passwordB1")
@@ -511,7 +511,7 @@ func TestWiring_Logout_DoesNotAffectOtherUser(t *testing.T) {
 	userB, _ := newUser(t, "b@example.com", "passwordB1")
 	ms := testutil.NewMockStore(userA, userB)
 	mc := testutil.NewMockCache()
-	h := &AuthHandler{PS: ms, RS: mc}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}}
 
 	// Both users log in
 	doLogin(t, h, "b@example.com", "passwordB1")

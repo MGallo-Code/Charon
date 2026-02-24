@@ -35,10 +35,11 @@ func assertBadRequest(t *testing.T, w *httptest.ResponseRecorder, expectedMsg st
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type: expected application/json, got %q", ct)
 	}
-	body, _ := io.ReadAll(w.Body)
+	bodyBytes, _ := io.ReadAll(w.Body)
+	body := strings.TrimSuffix(string(bodyBytes), "\n")
 	expected := fmt.Sprintf(`{"message":"%s"}`, expectedMsg)
-	if string(body) != expected {
-		t.Errorf("body: expected %q, got %q", expected, string(body))
+	if body != expected {
+		t.Errorf("body: expected %q, got %q", expected, body)
 	}
 }
 
@@ -51,9 +52,10 @@ func assertInternalServerError(t *testing.T, w *httptest.ResponseRecorder) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type: expected application/json, got %q", ct)
 	}
-	body, _ := io.ReadAll(w.Body)
-	if string(body) != `{"message":"internal server error"}` {
-		t.Errorf("body: expected internal server error message, got %q", string(body))
+	bodyBytes, _ := io.ReadAll(w.Body)
+	body := strings.TrimSuffix(string(bodyBytes), "\n")
+	if body != `{"message":"internal server error"}` {
+		t.Errorf("body: expected internal server error message, got %q", body)
 	}
 }
 
@@ -66,10 +68,11 @@ func assertUnauthorized(t *testing.T, w *httptest.ResponseRecorder, expectedMsg 
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type: expected application/json, got %q", ct)
 	}
-	body, _ := io.ReadAll(w.Body)
+	bodyBytes, _ := io.ReadAll(w.Body)
+	body := strings.TrimSuffix(string(bodyBytes), "\n")
 	expected := fmt.Sprintf(`{"message":"%s"}`, expectedMsg)
-	if string(body) != expected {
-		t.Errorf("body: expected %q, got %q", expected, string(body))
+	if body != expected {
+		t.Errorf("body: expected %q, got %q", expected, body)
 	}
 }
 
@@ -334,7 +337,7 @@ func TestLoginByEmail(t *testing.T) {
 	})
 
 	t.Run("missing email returns Unauthorized", func(t *testing.T) {
-		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache(), RL: &testutil.MockRateLimiter{}}
 
 		body := strings.NewReader(`{"password":"password123"}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
@@ -346,7 +349,7 @@ func TestLoginByEmail(t *testing.T) {
 	})
 
 	t.Run("missing password returns Unauthorized", func(t *testing.T) {
-		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache(), RL: &testutil.MockRateLimiter{}}
 
 		body := strings.NewReader(`{"email":"test@example.com"}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
@@ -357,12 +360,58 @@ func TestLoginByEmail(t *testing.T) {
 		assertUnauthorized(t, w, "invalid credentials")
 	})
 
+	// -- Rate limiting (429, 500) --
+
+	t.Run("rate limited returns 429", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &testutil.MockStore{},
+			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{AllowErr: store.ErrRateLimitExceeded},
+		}
+
+		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
+		w := httptest.NewRecorder()
+
+		h.LoginByEmail(w, r)
+
+		if w.Code != http.StatusTooManyRequests {
+			t.Errorf("status: expected 429, got %d", w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Content-Type: expected application/json, got %q", ct)
+		}
+		// No session cookie on rate-limited request.
+		for _, c := range w.Result().Cookies() {
+			if c.Name == "__Host-session" {
+				t.Error("session cookie should not be set on rate-limited request")
+			}
+		}
+	})
+
+	t.Run("rate limiter error returns InternalServerError", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &testutil.MockStore{},
+			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{AllowErr: errors.New("redis unavailable")},
+		}
+
+		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
+		w := httptest.NewRecorder()
+
+		h.LoginByEmail(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
 	// -- Authentication failures (401s) --
 
 	t.Run("non-existent user returns Unauthorized", func(t *testing.T) {
 		h := AuthHandler{
 			PS: &testutil.MockStore{GetUserByEmailErr: pgx.ErrNoRows},
 			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"nonexistent@example.com","password":"password123"}`)
@@ -378,6 +427,7 @@ func TestLoginByEmail(t *testing.T) {
 		h := AuthHandler{
 			PS: testutil.NewMockStore(testUser),
 			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"wrongpassword"}`)
@@ -395,6 +445,7 @@ func TestLoginByEmail(t *testing.T) {
 		h := AuthHandler{
 			PS: &testutil.MockStore{GetUserByEmailErr: errors.New("database connection failed")},
 			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -418,6 +469,7 @@ func TestLoginByEmail(t *testing.T) {
 		h := AuthHandler{
 			PS: testutil.NewMockStore(badUser),
 			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -435,6 +487,7 @@ func TestLoginByEmail(t *testing.T) {
 		h := AuthHandler{
 			PS: ps,
 			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -452,6 +505,7 @@ func TestLoginByEmail(t *testing.T) {
 		h := AuthHandler{
 			PS: testutil.NewMockStore(testUser),
 			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -468,6 +522,7 @@ func TestLoginByEmail(t *testing.T) {
 		h := AuthHandler{
 			PS: testutil.NewMockStore(testUser),
 			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123","remember_me":true}`)
@@ -498,6 +553,7 @@ func TestLoginByEmail(t *testing.T) {
 		h := AuthHandler{
 			PS: testutil.NewMockStore(testUser),
 			RS: testutil.NewMockCache(),
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
@@ -903,9 +959,10 @@ func assertGenericResetResponse(t *testing.T, w *httptest.ResponseRecorder) {
 	if w.Code != http.StatusOK {
 		t.Errorf("status: expected 200, got %d", w.Code)
 	}
-	body, _ := io.ReadAll(w.Body)
-	if string(body) != `{"message":"if that email exists, a reset link has been sent"}` {
-		t.Errorf("body: expected generic reset message, got %q", string(body))
+	bodyBytes, _ := io.ReadAll(w.Body)
+	body := strings.TrimSuffix(string(bodyBytes), "\n")
+	if body != `{"message":"if that email exists, a reset link has been sent"}` {
+		t.Errorf("body: expected generic reset message, got %q", body)
 	}
 }
 
@@ -1252,9 +1309,10 @@ func TestPasswordConfirm(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("status: expected 200, got %d", w.Code)
 		}
-		body, _ := io.ReadAll(w.Body)
-		if string(body) != `{"message":"password updated"}` {
-			t.Errorf("body: expected password updated message, got %q", string(body))
+		bodyBytes, _ := io.ReadAll(w.Body)
+		body := strings.TrimSuffix(string(bodyBytes), "\n")
+		if body != `{"message":"password updated"}` {
+			t.Errorf("body: expected password updated message, got %q", body)
 		}
 	})
 }
