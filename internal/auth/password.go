@@ -10,6 +10,7 @@ import (
 	"fmt"
 	netmail "net/mail"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -111,15 +112,14 @@ func ValidateEmail(email string) string {
 
 // ValidatePassword checks length constraints; returns error message or empty string.
 func ValidatePassword(password string) string {
-	// Validate password — min 6, max 128 to prevent DoS via Argon2id.
+	// Validate password — min 8 chars (user-perceived), max 128 bytes (Argon2id DoS guard).
 	if password == "" {
 		return "No password provided!"
 	}
-	pwdLen := len(password)
-	if pwdLen < 6 {
+	if utf8.RuneCountInString(password) < 8 {
 		return "Password too short!"
 	}
-	if pwdLen > 128 {
+	if len(password) > 128 {
 		return "Password too long!"
 	}
 	return ""
