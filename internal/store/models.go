@@ -13,6 +13,10 @@ import (
 // Callers use errors.Is to distinguish rate limit rejections from Redis failures.
 var ErrRateLimitExceeded = errors.New("rate limit exceeded")
 
+// ErrCacheMiss is returned by GetSession when the key is not in Redis.
+// Callers use errors.Is to distinguish a true miss from a Redis infrastructure failure.
+var ErrCacheMiss = errors.New("cache miss")
+
 // User represents a row in the users table.
 // Nullable columns are pointers — nil means SQL NULL.
 type User struct {
