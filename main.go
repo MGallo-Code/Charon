@@ -177,6 +177,7 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	})
 	r.Post("/register/email", h.RegisterByEmail)
 	r.Post("/login/email", h.LoginByEmail)
+	r.Post("/password/confirm", h.PasswordConfirm)
 
 	// Authentication required routes
 	r.Group(func(r chi.Router) {
