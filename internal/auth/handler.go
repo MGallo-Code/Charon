@@ -196,7 +196,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Run dummy hash to equalise timing with found-user path.
-			VerifyPassword(loginInput.Password, dummyPasswordHash())
+			_, _ = VerifyPassword(loginInput.Password, dummyPasswordHash())
 			logInfo(r, "login attempted with non-existent email")
 		} else {
 			logError(r, "failed to fetch user for login", "error", err)
