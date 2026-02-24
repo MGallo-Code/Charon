@@ -38,7 +38,7 @@ func newSmokeHandler(t *testing.T) *auth.AuthHandler {
 		Email:        &email,
 		PasswordHash: hash,
 	}
-	return &auth.AuthHandler{PS: testutil.NewMockStore(user), RS: testutil.NewMockCache()}
+	return &auth.AuthHandler{PS: testutil.NewMockStore(user), RS: testutil.NewMockCache(), RL: &testutil.MockRateLimiter{}}
 }
 
 // doSmokeLogin logs in with smokeEmail/smokePassword and returns the response.
