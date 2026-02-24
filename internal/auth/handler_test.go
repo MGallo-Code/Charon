@@ -6,6 +6,9 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -1025,6 +1028,235 @@ func TestPasswordReset(t *testing.T) {
 		assertGenericResetResponse(t, w)
 		if mailer.LastSentTo != email {
 			t.Errorf("email sent to: expected normalised %q, got %q", email, mailer.LastSentTo)
+		}
+	})
+}
+
+// --- PasswordConfirm ---
+
+// seedConfirmToken plants a password_reset token in ms; returns base64 token for requests.
+// Generates raw bytes, stores SHA-256 hash in MockStore (mirrors GenerateToken + CreateToken).
+func seedConfirmToken(ms *testutil.MockStore, userID uuid.UUID) string {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		panic("seedConfirmToken: rand.Read: " + err.Error())
+	}
+	hash := sha256.Sum256(raw)
+	if ms.Tokens == nil {
+		ms.Tokens = make(map[string]*store.Token)
+	}
+	ms.Tokens[string(hash[:])] = &store.Token{
+		ID:        uuid.Must(uuid.NewV7()),
+		UserID:    userID,
+		TokenType: "password_reset",
+		TokenHash: hash[:],
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// pwdConfirmReq builds a POST /auth/password/confirm request with given token and password.
+func pwdConfirmReq(token, newPwd string) *http.Request {
+	body := strings.NewReader(fmt.Sprintf(`{"token":%q,"new_password":%q}`, token, newPwd))
+	return httptest.NewRequest(http.MethodPost, "/auth/password/confirm", body)
+}
+
+func TestPasswordConfirm(t *testing.T) {
+	validPassword := "newpwd1"
+	testEmail := "confirm@example.com"
+	testUserID := uuid.Must(uuid.NewV7())
+	testUser := &store.User{
+		ID:    testUserID,
+		Email: &testEmail,
+	}
+
+	// freshStore seeds testUser + one valid reset token; returns store and base64 token string.
+	freshStore := func() (*testutil.MockStore, string) {
+		ms := testutil.NewMockStore(testUser)
+		tok := seedConfirmToken(ms, testUserID)
+		return ms, tok
+	}
+
+	// -- Input validation (400s) --
+
+	t.Run("empty body returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/confirm", nil)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "error decoding request body")
+	})
+
+	t.Run("invalid JSON returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/confirm", strings.NewReader(`{not json}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "error decoding request body")
+	})
+
+	t.Run("empty new_password returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		// Password validation runs before token decode -- token field irrelevant here.
+		r := pwdConfirmReq("sometoken", "")
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "No password provided!")
+	})
+
+	t.Run("password too short returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := pwdConfirmReq("sometoken", "abc")
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "Password too short!")
+	})
+
+	t.Run("password too long returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := pwdConfirmReq("sometoken", strings.Repeat("a", 129))
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "Password too long!")
+	})
+
+	t.Run("malformed base64 token returns BadRequest", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+
+		r := pwdConfirmReq("!!!not-base64!!!", validPassword)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "invalid reset token")
+	})
+
+	// -- Token validation (400s) --
+
+	t.Run("unknown token returns BadRequest", func(t *testing.T) {
+		// No token seeded -- ConsumeToken returns pgx.ErrNoRows for unknown hash.
+		h := AuthHandler{
+			PS: testutil.NewMockStore(testUser),
+			RS: testutil.NewMockCache(),
+		}
+
+		unknownRaw := make([]byte, 32) // zero bytes, valid base64, no matching token in store
+		r := pwdConfirmReq(base64.RawURLEncoding.EncodeToString(unknownRaw), validPassword)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "invalid or expired reset token")
+	})
+
+	t.Run("ConsumeToken store error returns InternalServerError", func(t *testing.T) {
+		ms := testutil.NewMockStore(testUser)
+		ms.ConsumeTokenErr = errors.New("database error")
+		h := AuthHandler{PS: ms, RS: testutil.NewMockCache()}
+
+		// ConsumeTokenErr fires before lookup -- any valid base64 triggers it.
+		unknownRaw := make([]byte, 32)
+		r := pwdConfirmReq(base64.RawURLEncoding.EncodeToString(unknownRaw), validPassword)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	// -- Store errors after token consumed (500s) --
+
+	t.Run("UpdateUserPassword failure returns InternalServerError", func(t *testing.T) {
+		ms, tok := freshStore()
+		ms.UpdateUserPasswordErr = errors.New("database write failed")
+		h := AuthHandler{PS: ms, RS: testutil.NewMockCache()}
+
+		r := pwdConfirmReq(tok, validPassword)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	t.Run("Postgres DeleteAllUserSessions failure returns InternalServerError", func(t *testing.T) {
+		ms, tok := freshStore()
+		ms.DeleteAllSessionsErr = errors.New("database write failed")
+		h := AuthHandler{PS: ms, RS: testutil.NewMockCache()}
+
+		r := pwdConfirmReq(tok, validPassword)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertInternalServerError(t, w)
+	})
+
+	// -- Non-fatal failures (200) --
+
+	t.Run("Redis DeleteAllUserSessions failure still returns OK", func(t *testing.T) {
+		ms, tok := freshStore()
+		h := AuthHandler{
+			PS: ms,
+			RS: &testutil.MockCache{DeleteAllSessionsErr: errors.New("redis unavailable")},
+		}
+
+		r := pwdConfirmReq(tok, validPassword)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+	})
+
+	t.Run("SetEmailConfirmedAt failure still returns OK", func(t *testing.T) {
+		ms, tok := freshStore()
+		ms.SetEmailConfirmedAtErr = errors.New("database write failed")
+		h := AuthHandler{PS: ms, RS: testutil.NewMockCache()}
+
+		r := pwdConfirmReq(tok, validPassword)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+	})
+
+	// -- Happy path (200) --
+
+	t.Run("valid token and password returns OK", func(t *testing.T) {
+		ms, tok := freshStore()
+		h := AuthHandler{PS: ms, RS: testutil.NewMockCache()}
+
+		r := pwdConfirmReq(tok, validPassword)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+		body, _ := io.ReadAll(w.Body)
+		if string(body) != `{"message": "password updated"}` {
+			t.Errorf("body: expected password updated message, got %q", string(body))
 		}
 	})
 }
