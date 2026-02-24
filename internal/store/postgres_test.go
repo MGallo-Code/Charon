@@ -882,6 +882,161 @@ func TestSetEmailConfirmedAt(t *testing.T) {
 	})
 }
 
+// --- WriteAuditLog ---
+
+func TestWriteAuditLog(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("inserts full entry correctly", func(t *testing.T) {
+		email := "audit_full@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		ip := "192.168.1.1"
+		ua := "Mozilla/5.0"
+		metadata := []byte(`{"session_id":"abc123"}`)
+
+		err := testStore.WriteAuditLog(ctx, AuditEntry{
+			UserID:    &userID,
+			Action:    "user.login",
+			IPAddress: &ip,
+			UserAgent: &ua,
+			Metadata:  metadata,
+		})
+		if err != nil {
+			t.Fatalf("WriteAuditLog failed: %v", err)
+		}
+
+		var (
+			dbUserID    uuid.UUID
+			dbAction    string
+			dbIPAddress string
+			dbUserAgent string
+			dbMetadata  []byte
+			dbCreatedAt time.Time
+		)
+		err = testStore.pool.QueryRow(ctx, `
+			SELECT user_id, action, ip_address, user_agent, metadata, created_at
+			FROM audit_logs
+			WHERE user_id = $1 AND action = $2
+		`, userID, "user.login").Scan(
+			&dbUserID, &dbAction, &dbIPAddress, &dbUserAgent, &dbMetadata, &dbCreatedAt,
+		)
+		if err != nil {
+			t.Fatalf("querying audit log: %v", err)
+		}
+		if dbUserID != userID {
+			t.Errorf("user_id: expected %v, got %v", userID, dbUserID)
+		}
+		if dbAction != "user.login" {
+			t.Errorf("action: expected %q, got %q", "user.login", dbAction)
+		}
+		if dbIPAddress != ip {
+			t.Errorf("ip_address: expected %q, got %q", ip, dbIPAddress)
+		}
+		if dbUserAgent != ua {
+			t.Errorf("user_agent: expected %q, got %q", ua, dbUserAgent)
+		}
+		if len(dbMetadata) == 0 {
+			t.Error("metadata should not be empty")
+		}
+		if dbCreatedAt.IsZero() {
+			t.Error("created_at was not set")
+		}
+	})
+
+	t.Run("inserts with nil user_id", func(t *testing.T) {
+		ip := "10.0.0.1"
+		ua := "curl/7.0"
+
+		err := testStore.WriteAuditLog(ctx, AuditEntry{
+			UserID:    nil,
+			Action:    "user.login_failed",
+			IPAddress: &ip,
+			UserAgent: &ua,
+		})
+		if err != nil {
+			t.Fatalf("WriteAuditLog failed: %v", err)
+		}
+
+		// Verify user_id stored as NULL
+		var dbUserID *uuid.UUID
+		err = testStore.pool.QueryRow(ctx, `
+			SELECT user_id FROM audit_logs
+			WHERE action = $1 AND ip_address = $2
+		`, "user.login_failed", ip).Scan(&dbUserID)
+		if err != nil {
+			t.Fatalf("querying audit log: %v", err)
+		}
+		if dbUserID != nil {
+			t.Errorf("user_id should be NULL, got %v", dbUserID)
+		}
+	})
+
+	t.Run("inserts with nil ip and user_agent", func(t *testing.T) {
+		email := "audit_nil_ip@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+
+		err := testStore.WriteAuditLog(ctx, AuditEntry{
+			UserID: &userID,
+			Action: "user.logout_all",
+		})
+		if err != nil {
+			t.Fatalf("WriteAuditLog failed: %v", err)
+		}
+
+		var dbIP *string
+		var dbUA *string
+		err = testStore.pool.QueryRow(ctx, `
+			SELECT ip_address, user_agent FROM audit_logs
+			WHERE user_id = $1 AND action = $2
+		`, userID, "user.logout_all").Scan(&dbIP, &dbUA)
+		if err != nil {
+			t.Fatalf("querying audit log: %v", err)
+		}
+		if dbIP != nil {
+			t.Errorf("ip_address should be NULL, got %v", dbIP)
+		}
+		if dbUA != nil {
+			t.Errorf("user_agent should be NULL, got %v", dbUA)
+		}
+	})
+
+	t.Run("inserts with nil metadata", func(t *testing.T) {
+		email := "audit_nil_meta@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		ip := "127.0.0.1"
+		ua := "go-test"
+
+		err := testStore.WriteAuditLog(ctx, AuditEntry{
+			UserID:    &userID,
+			Action:    "user.registered",
+			IPAddress: &ip,
+			UserAgent: &ua,
+			Metadata:  nil,
+		})
+		if err != nil {
+			t.Fatalf("WriteAuditLog failed: %v", err)
+		}
+
+		var dbMetadata []byte
+		err = testStore.pool.QueryRow(ctx, `
+			SELECT metadata FROM audit_logs
+			WHERE user_id = $1 AND action = $2
+		`, userID, "user.registered").Scan(&dbMetadata)
+		if err != nil {
+			t.Fatalf("querying audit log: %v", err)
+		}
+		if dbMetadata != nil {
+			t.Errorf("metadata should be NULL, got %q", dbMetadata)
+		}
+	})
+}
+
 // --- ConsumeToken ---
 
 func TestConsumeToken(t *testing.T) {
