@@ -156,6 +156,8 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 			InternalServerError(w, r, err)
 			return
 		}
+	} else {
+		logInfo(r, "user registered", "user_id", userID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -419,6 +421,7 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 		InternalServerError(w, r, err)
 		return
 	} else if !pwdMatch {
+		logWarn(r, "password change failed: wrong current password", "user_id", id)
 		Unauthorized(w, r, "invalid credentials")
 		return
 	}
@@ -564,6 +567,7 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	userID, err := h.PS.ConsumeToken(r.Context(), tokenHash[:], "password_reset")
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			logWarn(r, "password reset failed: invalid or expired token")
 			BadRequest(w, r, "invalid or expired reset token")
 			return
 		}

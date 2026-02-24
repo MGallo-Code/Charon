@@ -7,11 +7,14 @@ package auth
 import (
 	"log/slog"
 	"net/http"
+
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 // reqAttrs returns standard request-scoped attributes for logging.
 func reqAttrs(r *http.Request) []any {
 	return []any{
+		"request_id", middleware.GetReqID(r.Context()),
 		"ip", r.RemoteAddr,
 		"user_agent", r.UserAgent(),
 		"method", r.Method,
