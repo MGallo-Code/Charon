@@ -48,6 +48,15 @@ func Forbidden(w http.ResponseWriter) {
 	}{"forbidden"})
 }
 
+// TooManyRequests returns a 429 JSON response.
+func TooManyRequests(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	json.NewEncoder(w).Encode(struct {
+		Message string `json:"message"`
+	}{"too many requests"})
+}
+
 // OK returns a 200 JSON response with the given message.
 func OK(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
