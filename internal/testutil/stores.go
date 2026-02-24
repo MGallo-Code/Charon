@@ -34,6 +34,7 @@ type MockStore struct {
 	CreateTokenErr         error
 	GetTokenByHashErr      error
 	MarkTokenUsedErr       error
+	ConsumeTokenErr        error
 	SetEmailConfirmedAtErr error
 
 	Users    map[string]*store.User    // keyed by email
@@ -198,6 +199,21 @@ func (m *MockStore) MarkTokenUsed(_ context.Context, tokenHash []byte) error {
 	now := time.Now()
 	t.UsedAt = &now
 	return nil
+}
+
+func (m *MockStore) ConsumeToken(_ context.Context, tokenHash []byte, tokenType string) (uuid.UUID, error) {
+	if m.ConsumeTokenErr != nil {
+		return uuid.UUID{}, m.ConsumeTokenErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.Tokens[string(tokenHash)]
+	if !ok || t.TokenType != tokenType {
+		return uuid.UUID{}, fmt.Errorf("consuming token: %w", pgx.ErrNoRows)
+	}
+	now := time.Now()
+	t.UsedAt = &now
+	return t.UserID, nil
 }
 
 func (m *MockStore) SetEmailConfirmedAt(_ context.Context, userID uuid.UUID) error {
