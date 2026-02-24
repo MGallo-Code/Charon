@@ -88,15 +88,18 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 				return
 			}
 			// Repopulate cache, non-fatal on failure.
+			// Skip if TTL <= 0 -- Redis SET with TTL=0 means no expiry, not immediate expiry.
 			ttl := max(0, int(time.Until(pgSess.ExpiresAt).Seconds()))
-			if err := h.RS.SetSession(r.Context(), redisKey, store.Session{
-				ID:        pgSess.ID,
-				UserID:    pgSess.UserID,
-				TokenHash: pgSess.TokenHash,
-				CSRFToken: pgSess.CSRFToken,
-				ExpiresAt: pgSess.ExpiresAt,
-			}, ttl); err != nil {
-				logWarn(r, "failed to repopulate session cache", "error", err)
+			if ttl > 0 {
+				if err := h.RS.SetSession(r.Context(), redisKey, store.Session{
+					ID:        pgSess.ID,
+					UserID:    pgSess.UserID,
+					TokenHash: pgSess.TokenHash,
+					CSRFToken: pgSess.CSRFToken,
+					ExpiresAt: pgSess.ExpiresAt,
+				}, ttl); err != nil {
+					logWarn(r, "failed to repopulate session cache", "error", err)
+				}
 			}
 			userID = pgSess.UserID
 			csrfToken = pgSess.CSRFToken
