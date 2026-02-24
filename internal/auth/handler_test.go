@@ -441,7 +441,7 @@ func TestLoginByEmail(t *testing.T) {
 
 	// -- Database/system errors (500s) --
 
-	t.Run("database error when fetching user returns Unauthorized", func(t *testing.T) {
+	t.Run("database error when fetching user returns InternalServerError", func(t *testing.T) {
 		h := AuthHandler{
 			PS: &testutil.MockStore{GetUserByEmailErr: errors.New("database connection failed")},
 			RS: testutil.NewMockCache(),
@@ -454,10 +454,8 @@ func TestLoginByEmail(t *testing.T) {
 
 		h.LoginByEmail(w, r)
 
-		// Database errors that aren't "no rows" should return 500, not 401
-		// But our handler returns 401 for all getUserByEmail errors (generic "invalid credentials")
-		// This is intentional to prevent user enumeration via timing
-		assertUnauthorized(t, w, "invalid credentials")
+		// Non-ErrNoRows DB errors return 500
+		assertInternalServerError(t, w)
 	})
 
 	t.Run("malformed password hash returns InternalServerError", func(t *testing.T) {
