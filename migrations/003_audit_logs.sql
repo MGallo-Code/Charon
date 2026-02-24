@@ -6,7 +6,7 @@
 -- =~=~=~=~=~=~=~=~=~=~=~=~=
 
 CREATE TABLE IF NOT EXISTS audit_logs (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID,
     -- Event type as dot-namespaced string: user.registered, user.login, etc...
     action TEXT NOT NULL,
