@@ -6,7 +6,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -152,6 +151,27 @@ redis.call('DEL', KEYS[1])
 return #hashes
 `)
 
+// allowScript atomically checks lockout, increments the attempt counter, sets the window TTL
+// on the first attempt, and writes the lockout key when the threshold is reached.
+// Eliminates the TOCTOU window between the lockout check and counter increment.
+// KEYS[1] = lockout key, KEYS[2] = counter key.
+// ARGV[1] = max_attempts, ARGV[2] = window (ms), ARGV[3] = lockout TTL (ms).
+// Returns 1 if the attempt is blocked, 0 if allowed.
+var allowScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    return 1
+end
+local count = redis.call('INCR', KEYS[2])
+if count == 1 then
+    redis.call('PEXPIRE', KEYS[2], tonumber(ARGV[2]))
+end
+if count >= tonumber(ARGV[1]) then
+    redis.call('SET', KEYS[1], '', 'PX', tonumber(ARGV[3]))
+    return 1
+end
+return 0
+`)
+
 // RedisRateLimiter implements auth.RateLimiter using Redis counters and lockout keys.
 // Holds a reference to the shared Redis client -- does not own its lifecycle.
 type RedisRateLimiter struct {
@@ -166,43 +186,21 @@ func NewRedisRateLimiter(rdb *redis.Client) *RedisRateLimiter {
 
 // Allow checks whether the action identified by key is within policy limits.
 // Returns nil if the attempt is allowed; non-nil error if locked out or threshold exceeded.
-// Two Redis keys per action:
-//   - "rl:counter:{key}" -- attempt counter, expires after policy.Window
-//   - "rl:lockout:{key}" -- lockout flag, expires after policy.LockoutTTL
-//
-// Check lockout key first (fast reject if already blocked).
-// Increment counter; on first increment, set TTL to policy.Window.
-// When counter reaches policy.MaxAttempts, write lockout key with TTL = policy.LockoutTTL.
 func (r *RedisRateLimiter) Allow(ctx context.Context, key string, policy RateLimit) error {
-	lockoutKey := fmt.Sprintf("rl:lockout:%s", key)
-
-	// Fast reject if already locked out
-	err := r.rdb.Get(ctx, lockoutKey).Err()
-	if err == nil {
-		return ErrRateLimitExceeded
+	keys := []string{
+		fmt.Sprintf("rl:lockout:%s", key),
+		fmt.Sprintf("rl:counter:%s", key),
 	}
-	if !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("checking rate limit lockout: %w", err)
-	}
-
-	counterKey := fmt.Sprintf("rl:counter:%s", key)
-
-	// Increment attempt counter
-	count, err := r.rdb.Incr(ctx, counterKey).Result()
+	blocked, err := allowScript.Run(ctx, r.rdb, keys,
+		policy.MaxAttempts,
+		policy.Window.Milliseconds(),
+		policy.LockoutTTL.Milliseconds(),
+	).Int64()
 	if err != nil {
-		return fmt.Errorf("incrementing rate limit counter: %w", err)
+		return fmt.Errorf("checking rate limit: %w", err)
 	}
-	// First attempt in window -- set expiry so counter resets after Window
-	if count == 1 {
-		if err := r.rdb.ExpireNX(ctx, counterKey, policy.Window).Err(); err != nil {
-			return fmt.Errorf("setting rate limit window: %w", err)
-		}
-	}
-	// Threshold reached -- write lockout key
-	if count >= int64(policy.MaxAttempts) {
-		if err := r.rdb.Set(ctx, lockoutKey, "", policy.LockoutTTL).Err(); err != nil {
-			return fmt.Errorf("setting rate limit lockout: %w", err)
-		}
+	if blocked == 1 {
+		return ErrRateLimitExceeded
 	}
 	return nil
 }

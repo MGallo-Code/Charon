@@ -224,19 +224,24 @@ func TestAllow(t *testing.T) {
 		}
 	})
 
-	t.Run("threshold attempt is allowed but sets lockout", func(t *testing.T) {
+	t.Run("threshold attempt is blocked and sets lockout", func(t *testing.T) {
 		key := "test:allow:threshold"
 		policy := RateLimit{MaxAttempts: 3, Window: time.Minute, LockoutTTL: 5 * time.Minute}
 		t.Cleanup(func() { cleanupRateLimit(t, ctx, key) })
 
-		// Hit MaxAttempts -- all should return nil
-		for i := 0; i < 3; i++ {
+		// Attempts below threshold should succeed
+		for i := 0; i < 2; i++ {
 			if err := testRateLimiter.Allow(ctx, key, policy); err != nil {
 				t.Fatalf("attempt %d: expected nil, got %v", i+1, err)
 			}
 		}
 
-		// Lockout key must exist after the final allowed attempt
+		// Threshold attempt is itself blocked and sets lockout
+		if err := testRateLimiter.Allow(ctx, key, policy); !errors.Is(err, ErrRateLimitExceeded) {
+			t.Errorf("threshold attempt: expected ErrRateLimitExceeded, got %v", err)
+		}
+
+		// Lockout key must exist
 		if err := testRedis.rdb.Get(ctx, fmt.Sprintf("rl:lockout:%s", key)).Err(); err != nil {
 			t.Errorf("expected lockout key after threshold: %v", err)
 		}
