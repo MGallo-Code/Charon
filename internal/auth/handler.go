@@ -76,6 +76,10 @@ type Store interface {
 	// Returns pgx.ErrNoRows if no matching unused token exists.
 	MarkTokenUsed(ctx context.Context, tokenHash []byte) error
 
+	// ConsumeToken fetches a valid, unused, non-expired token by its SHA-256 hash.
+	// Returns user_id associated with token if valid token found, pgx.ErrNoRows if no token found.
+	ConsumeToken(ctx context.Context, tokenHash []byte, tokenType string) (uuid.UUID, error)
+
 	// SetEmailConfirmedAt sets email_confirmed_at = NOW() for userID if not already confirmed.
 	SetEmailConfirmedAt(ctx context.Context, userID uuid.UUID) error
 }
@@ -553,15 +557,21 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	// Decode and hash token
 	tokenStr, err := base64.RawURLEncoding.DecodeString(pwdConfirmInput.Token)
 	if err != nil {
-		InternalServerError(w, r, err)
+		BadRequest(w, r, "invalid reset token")
 		return
 	}
 	tokenHash := sha256.Sum256(tokenStr)
 
 	// Use hashed token to consume token in db
-	//token, err := h.PS.ConsumeToken(r.Context(), tokenHash[:])
-	token := &store.Token{
-		TokenHash: tokenHash[:],
+	userID, err := h.PS.ConsumeToken(r.Context(), tokenHash[:], "password_reset")
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			BadRequest(w, r, "invalid or expired reset token")
+			return
+		}
+		logError(r, "failed to consume reset token", "error", err)
+		InternalServerError(w, r, err)
+		return
 	}
 
 	// Hash new_password with HashPassword.
@@ -572,27 +582,31 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update the hash in Postgres with UpdateUserPassword.
-	err = h.PS.UpdateUserPassword(r.Context(), token.UserID, newPassword)
+	err = h.PS.UpdateUserPassword(r.Context(), userID, newPassword)
 	if err != nil {
 		InternalServerError(w, r, err)
 		return
 	}
 
 	// Delete all sessions from Redis (non-fatal, log warn on error).
-	err = h.RS.DeleteAllUserSessions(r.Context(), token.UserID)
+	err = h.RS.DeleteAllUserSessions(r.Context(), userID)
 	if err != nil {
 		logWarn(r, "failed to delete all sessions from redis", "error", err)
 	}
 
 	// Delete all sessions from Postgres (fatal, return 500 on error).
-	err = h.PS.DeleteAllUserSessions(r.Context(), token.UserID)
+	err = h.PS.DeleteAllUserSessions(r.Context(), userID)
 	if err != nil {
 		InternalServerError(w, r, err)
 		return
 	}
 
-	// Log success and return 200
-	logInfo(r, "user changed password", "user_id", token.UserID)
+	// Set email confirmed. reset proves ownership so non-fatal if fails
+	if err = h.PS.SetEmailConfirmedAt(r.Context(), userID); err != nil {
+		logWarn(r, "failed to set email_confirmed_at after password reset", "error", err, "user_id", userID)
+	}
+
+	logInfo(r, "user reset password", "user_id", userID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"message": "password updated"}`))
