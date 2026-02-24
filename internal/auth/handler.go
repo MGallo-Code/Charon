@@ -156,8 +156,9 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	resp, _ := json.Marshal(map[string]string{"user_id": userID.String()})
-	w.Write(resp)
+	json.NewEncoder(w).Encode(struct {
+		UserID string `json:"user_id"`
+	}{userID.String()})
 }
 
 // LoginByEmail handles POST /login — email + password authentication.
@@ -269,10 +270,12 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	SetSessionCookie(w, *token, expiresAt)
 	logInfo(r, "user logged in successfully", "user_id", user.ID, "remember_me", loginInput.RememberMe)
 
-	csrfTokenEncoded := base64.RawURLEncoding.EncodeToString(csrfToken[:])
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"user_id":"` + user.ID.String() + `","csrf_token":"` + csrfTokenEncoded + `"}`))
+	json.NewEncoder(w).Encode(struct {
+		UserID    string `json:"user_id"`
+		CSRFToken string `json:"csrf_token"`
+	}{user.ID.String(), base64.RawURLEncoding.EncodeToString(csrfToken[:])})
 }
 
 // LogoutAll handles POST /logout-all — ends every session for the authenticated user.
