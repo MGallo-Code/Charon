@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -94,11 +95,13 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 }
 
 // GetSession retrieves cached session by token hash.
-// Returns error on miss or if Redis unavailable.
+// Returns ErrCacheMiss on a true Redis miss; other errors indicate infrastructure failures.
 func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedSession, error) {
-	// Attempt to get session JSON from redis cache
 	raw, err := s.rdb.Get(ctx, fmt.Sprintf("session:%s", tokenHash)).Result()
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, ErrCacheMiss
+		}
 		return nil, fmt.Errorf("fetching session: %w", err)
 	}
 

@@ -76,7 +76,11 @@ func (h *AuthHandler) RequireAuth(next http.Handler) http.Handler {
 		var csrfToken []byte
 		sess, err := h.RS.GetSession(r.Context(), redisKey)
 		if err != nil {
-			// Redis miss, fall back to Postgres.
+			if !errors.Is(err, store.ErrCacheMiss) {
+				// Real Redis failure -- log it; Postgres is the fallback but this warrants attention.
+				logError(r, "redis session lookup failed, falling back to postgres", "error", err)
+			}
+			// Miss or infra failure -- fall back to Postgres.
 			pgSess, err := h.PS.GetSessionByTokenHash(r.Context(), tokenHash[:])
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
