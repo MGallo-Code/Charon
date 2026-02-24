@@ -129,30 +129,28 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tokenHash string, userID
 }
 
 // DeleteAllUserSessions removes all cached sessions for given user.
-// Uses per-user set to find all token hashes belonging to user.
+// Uses a Lua script so the read-and-delete is atomic -- no concurrent SetSession can slip through.
 func (s *RedisStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error {
 	setKey := fmt.Sprintf("user_sessions:%s", userID)
-
-	// Get all token hashes for this user
-	hashes, err := s.rdb.SMembers(ctx, setKey).Result()
-	if err != nil {
-		return fmt.Errorf("fetching user sessions: %w", err)
-	}
-
-	// Delete all session keys + set itself in one atomic pipeline
-	pipe := s.rdb.TxPipeline()
-	for _, hash := range hashes {
-		pipe.Del(ctx, fmt.Sprintf("session:%s", hash))
-	}
-	pipe.Del(ctx, setKey)
-
-	// Gogogo do it
-	_, err = pipe.Exec(ctx)
-	if err != nil {
+	if err := deleteAllSessionsScript.Run(ctx, s.rdb, []string{setKey}, "session:").Err(); err != nil {
 		return fmt.Errorf("deleting user sessions: %w", err)
 	}
 	return nil
 }
+
+// deleteAllSessionsScript atomically fetches every token hash for a user, deletes each
+// session key, then removes the tracking set in a single Redis operation.
+// Prevents a concurrent SetSession from slipping through between SMEMBERS and DEL.
+// KEYS[1] = "user_sessions:{userID}", ARGV[1] = "session:" prefix.
+// Returns the number of session keys deleted.
+var deleteAllSessionsScript = redis.NewScript(`
+local hashes = redis.call('SMEMBERS', KEYS[1])
+for _, hash in ipairs(hashes) do
+    redis.call('DEL', ARGV[1] .. hash)
+end
+redis.call('DEL', KEYS[1])
+return #hashes
+`)
 
 // RedisRateLimiter implements auth.RateLimiter using Redis counters and lockout keys.
 // Holds a reference to the shared Redis client -- does not own its lifecycle.
