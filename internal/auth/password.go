@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	netmail "net/mail"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -87,6 +88,25 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 
 	// Compare pwds w/ constant time for timing attacks
 	return subtle.ConstantTimeCompare(hash, expectedHash) == 1, nil
+}
+
+// ValidateEmail checks format and length constraints; returns error message or empty string.
+// RFC 5321: min ~5 chars (a@b.c), max 254.
+func ValidateEmail(email string) string {
+	if email == "" {
+		return "No email provided"
+	}
+	emailLen := len(email)
+	if emailLen < 5 {
+		return "Email too short!"
+	}
+	if emailLen > 254 {
+		return "Email too long!"
+	}
+	if _, err := netmail.ParseAddress(email); err != nil {
+		return "Invalid email format"
+	}
+	return ""
 }
 
 // ValidatePassword checks length constraints; returns error message or empty string.
