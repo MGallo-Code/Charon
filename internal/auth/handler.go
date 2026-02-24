@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	netmail "net/mail"
 	"strings"
 	"time"
 
@@ -119,22 +118,8 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate email — RFC 5321: min ~5 chars, max 254.
-	if registerInput.Email == "" {
-		BadRequest(w, r, "No email provided")
-		return
-	}
-	emailLen := len(registerInput.Email)
-	if emailLen < 5 {
-		BadRequest(w, r, "Email too short!")
-		return
-	}
-	if emailLen > 254 {
-		BadRequest(w, r, "Email too long!")
-		return
-	}
-	if _, err := netmail.ParseAddress(registerInput.Email); err != nil {
-		BadRequest(w, r, "Invalid email format")
+	if msg := ValidateEmail(registerInput.Email); msg != "" {
+		BadRequest(w, r, msg)
 		return
 	}
 
@@ -191,7 +176,12 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if loginInput.Email == "" || loginInput.Password == "" {
+	// Invalid email or missing password -- both return generic 401 (no enumeration).
+	if msg := ValidateEmail(loginInput.Email); msg != "" {
+		Unauthorized(w, r, "invalid credentials")
+		return
+	}
+	if loginInput.Password == "" {
 		Unauthorized(w, r, "invalid credentials")
 		return
 	}
@@ -311,10 +301,7 @@ func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 
 	ClearSessionCookie(w)
 	logInfo(r, "user logged out of all devices", "user_id", userID)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"message":"logged out of all devices"}`))
+	OK(w, "logged out of all devices")
 }
 
 // Logout handles POST /logout — ends authenticated session.
@@ -347,10 +334,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	ClearSessionCookie(w)
 	logInfo(r, "user logged out", "user_id", userID)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"message":"logged out"}`))
+	OK(w, "logged out")
 }
 
 // LoginEmailPolicy is the rate limit applied per email address on login attempts.
@@ -452,12 +436,8 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 
 	// Clear the session cookie; current session is now invalid.
 	ClearSessionCookie(w)
-
-	// Log success and return 200
 	logInfo(r, "user changed password", "user_id", id)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"message": "password updated"}`))
+	OK(w, "password updated")
 }
 
 // PasswordReset handles POST /auth/password/reset -- initiates the reset flow for a given email.
@@ -473,6 +453,11 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.ToLower(pwdResetInput.Email)
 
+	if msg := ValidateEmail(email); msg != "" {
+		BadRequest(w, r, msg)
+		return
+	}
+
 	// Check if email rate-limited, if so, err != nil, return
 	err := h.RL.Allow(r.Context(), fmt.Sprintf("reset:email:%s", email), PasswordResetPolicy)
 	if err != nil {
@@ -485,19 +470,14 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// genericResetResponse always returns the same 200, to destroy enumeration after user lookup.
-	genericResetResponse := func() {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"message":"if that email exists, a reset link has been sent"}`))
-	}
+	const resetMsg = "if that email exists, a reset link has been sent"
 
 	// Get user
 	user, err := h.PS.GetUserByEmail(r.Context(), email)
 	if err != nil {
 		// Generic 200 -- no enumeration (caller cannot learn whether email exists)
 		logInfo(r, "password reset requested for unknown email")
-		genericResetResponse()
+		OK(w, resetMsg)
 		return
 	}
 
@@ -505,7 +485,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	token, tokenHash, err := GenerateToken()
 	if err != nil {
 		logError(r, "failed to generate password reset token", "error", err)
-		genericResetResponse()
+		OK(w, resetMsg)
 		return
 	}
 
@@ -513,7 +493,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	tokenID, err := uuid.NewV7()
 	if err != nil {
 		logError(r, "failed to generate token id", "error", err)
-		genericResetResponse()
+		OK(w, resetMsg)
 		return
 	}
 
@@ -521,7 +501,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	err = h.PS.CreateToken(r.Context(), tokenID, user.ID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
 	if err != nil {
 		logError(r, "failed to persist password reset token", "error", err, "user_id", user.ID)
-		genericResetResponse()
+		OK(w, resetMsg)
 		return
 	}
 
@@ -529,12 +509,12 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	err = h.ML.SendPasswordReset(r.Context(), *user.Email, base64.RawURLEncoding.EncodeToString(token[:]))
 	if err != nil {
 		logError(r, "failed to send password reset email", "error", err, "user_id", user.ID)
-		genericResetResponse()
+		OK(w, resetMsg)
 		return
 	}
 
 	logInfo(r, "password reset email sent", "user_id", user.ID)
-	genericResetResponse()
+	OK(w, resetMsg)
 }
 
 // PasswordConfirm handles POST /auth/password/confirm -- completes the reset using the token from the email link.
@@ -611,7 +591,5 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	// No ClearSessionCookie -- reset flow is unauthenticated; caller has no session cookie.
 	// Sessions already purged above. Any stale cookie from a prior login will 401 on next use.
 	logInfo(r, "user reset password", "user_id", userID)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"message": "password updated"}`))
+	OK(w, "password updated")
 }

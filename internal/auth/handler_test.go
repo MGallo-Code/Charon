@@ -1253,7 +1253,7 @@ func TestPasswordConfirm(t *testing.T) {
 			t.Errorf("status: expected 200, got %d", w.Code)
 		}
 		body, _ := io.ReadAll(w.Body)
-		if string(body) != `{"message": "password updated"}` {
+		if string(body) != `{"message":"password updated"}` {
 			t.Errorf("body: expected password updated message, got %q", string(body))
 		}
 	})
