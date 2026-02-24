@@ -965,7 +965,7 @@ func TestConsumeToken(t *testing.T) {
 
 	t.Run("returns error for nonexistent token", func(t *testing.T) {
 		fakeHash := sha256.Sum256([]byte("nonexistent-consume-token"))
-		_, err := testStore.ConsumeToken(ctx, "password_reset", fakeHash[:])
+		_, err := testStore.ConsumeToken(ctx, fakeHash[:], "password_reset")
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("expected pgx.ErrNoRows for nonexistent token, got: %v", err)
 		}
