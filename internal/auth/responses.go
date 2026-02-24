@@ -33,6 +33,14 @@ func Unauthorized(w http.ResponseWriter, r *http.Request, message string) {
 	w.Write([]byte(`{"message":"` + message + `"}`))
 }
 
+// Forbidden returns a 403 JSON response with a generic message.
+// Intentionally vague, avoids leaking which validation stage failed.
+func Forbidden(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	w.Write([]byte(`{"message":"forbidden"}`))
+}
+
 // OK returns a 200 JSON response with the given message.
 func OK(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")

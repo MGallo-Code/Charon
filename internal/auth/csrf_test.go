@@ -61,8 +61,8 @@ func assertForbidden(t *testing.T, resp *http.Response) {
 		t.Errorf("Content-Type: expected application/json, got %q", ct)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if string(body) != `{"error":"forbidden"}` {
-		t.Errorf("body: expected {\"error\":\"forbidden\"}, got %q", string(body))
+	if string(body) != `{"message":"forbidden"}` {
+		t.Errorf("body: expected {\"message\":\"forbidden\"}, got %q", string(body))
 	}
 }
 

@@ -26,13 +26,6 @@ func ValidateCSRFToken(provided, stored [32]byte) bool {
 	return subtle.ConstantTimeCompare(provided[:], stored[:]) == 1
 }
 
-// csrfForbidden writes generic 403 JSON, intentionally vague to avoid leaking validation stage.
-func csrfForbidden(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	w.Write([]byte(`{"error":"forbidden"}`))
-}
-
 // CSRFMiddleware enforces CSRF protection on state-changing requests (POST, PUT, DELETE, PATCH).
 // Reads token from X-CSRF-Token header, validates against token injected by RequireAuth.
 // Must run after RequireAuth in the middleware chain.
@@ -45,7 +38,7 @@ func (h *AuthHandler) CSRFMiddleware(next http.Handler) http.Handler {
 			reqCSRFToken, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-CSRF-Token"))
 			if err != nil || len(reqCSRFToken) != 32 {
 				logWarn(r, "csrf validation failed", "reason", "invalid_token_format")
-				csrfForbidden(w)
+				Forbidden(w)
 				return
 			}
 
@@ -53,13 +46,13 @@ func (h *AuthHandler) CSRFMiddleware(next http.Handler) http.Handler {
 			storedCSRFToken, ok := CSRFTokenFromContext(r.Context())
 			if !ok || len(storedCSRFToken) != 32 {
 				logWarn(r, "csrf validation failed", "reason", "missing_csrf_context")
-				csrfForbidden(w)
+				Forbidden(w)
 				return
 			}
 			// Constant-time comparison to prevent timing attacks
 			if !ValidateCSRFToken([32]byte(reqCSRFToken), [32]byte(storedCSRFToken)) {
 				logWarn(r, "csrf validation failed", "reason", "token_mismatch")
-				csrfForbidden(w)
+				Forbidden(w)
 				return
 			}
 		}
