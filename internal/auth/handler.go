@@ -261,9 +261,10 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// RemoteAddr includes port — INET column expects bare IP.
+	// Empty string on parse failure is safer than storing "host:port" which Postgres rejects.
 	ipAddr, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		ipAddr = r.RemoteAddr
+		ipAddr = ""
 	}
 	userAgent := r.UserAgent()
 
