@@ -276,12 +276,19 @@ func (s *PostgresStore) ConsumeToken(ctx context.Context, tokenHash []byte, toke
 	return userID, nil
 }
 
-// WriteAuditLog inserts a single audit event row into auth_audit_log.
-
-// Accepts an AuditEntry value (struct defined alongside this method).
-// Non-blocking by design: caller logs the error but never fails the request on audit write failure.
-// user_id is nullable -- pass nil for pre-auth failures (e.g. login with unknown email).
-// metadata is a raw JSON blob; callers marshal their own context (session_id, token_type, etc.).
+// WriteAuditLog inserts a single audit event row into audit_logs table.
+func (s *PostgresStore) WriteAuditLog(ctx context.Context, entry AuditEntry) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO audit_logs
+			(user_id, action, ip_address, user_agent, metadata)
+		VALUES
+			($1, $2, $3, $4, $5)
+	`, entry.UserID, entry.Action, entry.IPAddress, entry.UserAgent, entry.Metadata)
+	if err != nil {
+		return fmt.Errorf("inserting audit log: %w", err)
+	}
+	return nil
+}
 
 // CleanupExpiredSessions deletes sessions expired before retention cutoff.
 // Pass a grace window (e.g. 7*24*time.Hour) to retain sessions for audit before deletion.
