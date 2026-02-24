@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -60,9 +61,10 @@ func assertForbidden(t *testing.T, resp *http.Response) {
 	if ct != "application/json" {
 		t.Errorf("Content-Type: expected application/json, got %q", ct)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != `{"message":"forbidden"}` {
-		t.Errorf("body: expected {\"message\":\"forbidden\"}, got %q", string(body))
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	body := strings.TrimSuffix(string(bodyBytes), "\n")
+	if body != `{"message":"forbidden"}` {
+		t.Errorf("body: expected {\"message\":\"forbidden\"}, got %q", body)
 	}
 }
 
