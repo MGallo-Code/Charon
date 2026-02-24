@@ -893,3 +893,138 @@ func TestLogout(t *testing.T) {
 		assertClearedSessionCookie(t, w)
 	})
 }
+
+// --- PasswordReset ---
+
+// assertGenericResetResponse checks the handler returned the no-enumeration 200 response.
+func assertGenericResetResponse(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusOK {
+		t.Errorf("status: expected 200, got %d", w.Code)
+	}
+	body, _ := io.ReadAll(w.Body)
+	if string(body) != `{"message":"if that email exists, a reset link has been sent"}` {
+		t.Errorf("body: expected generic reset message, got %q", string(body))
+	}
+}
+
+func TestPasswordReset(t *testing.T) {
+	email := "user@example.com"
+	userID, _ := uuid.NewV7()
+	existingUser := &store.User{ID: userID, Email: &email}
+
+	t.Run("invalid JSON returns 400", func(t *testing.T) {
+		h := AuthHandler{
+			PS: testutil.NewMockStore(existingUser),
+			RL: &testutil.MockRateLimiter{},
+			ML: &testutil.MockMailer{},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader("not-json"))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		assertBadRequest(t, w, "invalid request")
+	})
+
+	t.Run("unknown email returns generic 200 (no enumeration)", func(t *testing.T) {
+		h := AuthHandler{
+			PS: testutil.NewMockStore(), // no users seeded
+			RL: &testutil.MockRateLimiter{},
+			ML: &testutil.MockMailer{},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader(`{"email":"nobody@example.com"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		assertGenericResetResponse(t, w)
+	})
+
+	t.Run("rate limited returns 429", func(t *testing.T) {
+		h := AuthHandler{
+			PS: testutil.NewMockStore(existingUser),
+			RL: &testutil.MockRateLimiter{AllowErr: store.ErrRateLimitExceeded},
+			ML: &testutil.MockMailer{},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader(`{"email":"user@example.com"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		if w.Code != http.StatusTooManyRequests {
+			t.Errorf("status: expected 429, got %d", w.Code)
+		}
+	})
+
+	t.Run("CreateToken failure returns generic 200 (no enumeration)", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &testutil.MockStore{
+				Users:          map[string]*store.User{email: existingUser},
+				CreateTokenErr: errors.New("db error"),
+			},
+			RL: &testutil.MockRateLimiter{},
+			ML: &testutil.MockMailer{},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader(`{"email":"user@example.com"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		assertGenericResetResponse(t, w)
+	})
+
+	t.Run("email send failure returns generic 200 (no enumeration)", func(t *testing.T) {
+		h := AuthHandler{
+			PS: testutil.NewMockStore(existingUser),
+			RL: &testutil.MockRateLimiter{},
+			ML: &testutil.MockMailer{SendPasswordResetErr: errors.New("smtp unavailable")},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader(`{"email":"user@example.com"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		assertGenericResetResponse(t, w)
+	})
+
+	t.Run("happy path returns generic 200 and sends email", func(t *testing.T) {
+		mailer := &testutil.MockMailer{}
+		h := AuthHandler{
+			PS: testutil.NewMockStore(existingUser),
+			RL: &testutil.MockRateLimiter{},
+			ML: mailer,
+		}
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader(`{"email":"user@example.com"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		assertGenericResetResponse(t, w)
+		if mailer.LastSentTo != email {
+			t.Errorf("email sent to: expected %q, got %q", email, mailer.LastSentTo)
+		}
+		if mailer.LastSentToken == "" {
+			t.Error("expected a token to be sent, got empty string")
+		}
+	})
+
+	t.Run("email is normalised to lowercase before lookup", func(t *testing.T) {
+		mailer := &testutil.MockMailer{}
+		h := AuthHandler{
+			PS: testutil.NewMockStore(existingUser), // seeded with lowercase email
+			RL: &testutil.MockRateLimiter{},
+			ML: mailer,
+		}
+		// Submit with mixed case -- should still find the user
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader(`{"email":"User@Example.COM"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		assertGenericResetResponse(t, w)
+		if mailer.LastSentTo != email {
+			t.Errorf("email sent to: expected normalised %q, got %q", email, mailer.LastSentTo)
+		}
+	})
+}
