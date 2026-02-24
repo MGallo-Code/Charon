@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MGallo-Code/charon/internal/mail"
@@ -91,9 +92,13 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string, policy store.RateLimit) error
 }
 
-// dummyPasswordHash is a precomputed Argon2id hash for timing attack mitigation.
+// dummyPasswordHash generates a live Argon2id hash at startup for timing attack mitigation.
 // When a user doesn't exist, verify against this so both paths take equal time (~100ms).
-const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$YWJjZGVmZ2hpamtsbW5vcA$kC6C6jqLzC0JLlJgXhHbKMhLLpVvLJLLQw/IqT9ZYPU"
+// Generated from live constants so it tracks any future parameter changes in password.go.
+var dummyPasswordHash = sync.OnceValue(func() string {
+	h, _ := HashPassword("dummy")
+	return h
+})
 
 // AuthHandler holds dependencies for all /auth/* HTTP handlers and middleware.
 type AuthHandler struct {
@@ -191,7 +196,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Run dummy hash to equalise timing with found-user path.
-			VerifyPassword(loginInput.Password, dummyPasswordHash)
+			VerifyPassword(loginInput.Password, dummyPasswordHash())
 			logInfo(r, "login attempted with non-existent email")
 		} else {
 			logError(r, "failed to fetch user for login", "error", err)
