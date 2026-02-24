@@ -881,3 +881,93 @@ func TestSetEmailConfirmedAt(t *testing.T) {
 		}
 	})
 }
+
+// --- ConsumeToken ---
+
+func TestConsumeToken(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns user_id and marks token used", func(t *testing.T) {
+		email := "consume_token@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-consume-token"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
+
+		gotUserID, err := testStore.ConsumeToken(ctx, "password_reset", tokenHash[:])
+		if err != nil {
+			t.Fatalf("ConsumeToken failed: %v", err)
+		}
+		if gotUserID != userID {
+			t.Errorf("user_id: expected %v, got %v", userID, gotUserID)
+		}
+
+		// Verify used_at is now set in DB
+		var usedAt *time.Time
+		if err := testStore.pool.QueryRow(ctx,
+			"SELECT used_at FROM tokens WHERE token_hash = $1", tokenHash[:],
+		).Scan(&usedAt); err != nil {
+			t.Fatalf("querying token: %v", err)
+		}
+		if usedAt == nil {
+			t.Error("used_at should be set after ConsumeToken")
+		}
+	})
+
+	t.Run("returns error for already used token", func(t *testing.T) {
+		email := "consume_token_used@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-consume-already-used"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
+
+		// First consume succeeds
+		if _, err := testStore.ConsumeToken(ctx, "password_reset", tokenHash[:]); err != nil {
+			t.Fatalf("first ConsumeToken failed: %v", err)
+		}
+
+		// Second consume must fail
+		_, err := testStore.ConsumeToken(ctx, "password_reset", tokenHash[:])
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("expected pgx.ErrNoRows for already-used token, got: %v", err)
+		}
+	})
+
+	t.Run("returns error for expired token", func(t *testing.T) {
+		email := "consume_token_expired@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-consume-expired"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(-1*time.Second))
+
+		_, err := testStore.ConsumeToken(ctx, "password_reset", tokenHash[:])
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("expected pgx.ErrNoRows for expired token, got: %v", err)
+		}
+	})
+
+	t.Run("returns error for wrong token type", func(t *testing.T) {
+		email := "consume_token_type@example.com"
+		t.Cleanup(func() { cleanupUsersByEmail(t, ctx, email) })
+
+		userID := mustCreateUser(t, ctx, email, "fakehash")
+		tokenHash := sha256.Sum256([]byte("test-consume-wrong-type"))
+		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
+
+		_, err := testStore.ConsumeToken(ctx, "email_verification", tokenHash[:])
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("expected pgx.ErrNoRows for wrong token type, got: %v", err)
+		}
+	})
+
+	t.Run("returns error for nonexistent token", func(t *testing.T) {
+		fakeHash := sha256.Sum256([]byte("nonexistent-consume-token"))
+		_, err := testStore.ConsumeToken(ctx, "password_reset", fakeHash[:])
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("expected pgx.ErrNoRows for nonexistent token, got: %v", err)
+		}
+	})
+}
