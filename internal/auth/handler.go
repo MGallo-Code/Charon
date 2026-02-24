@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	netmail "net/mail"
+	"strings"
 	"time"
 
 	"github.com/MGallo-Code/charon/internal/mail"
@@ -61,6 +63,20 @@ type Store interface {
 
 	// DeleteAllUserSessions removes all sessions for a user.
 	DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error
+
+	// CreateToken inserts a new single-use verification token for the user.
+	CreateToken(ctx context.Context, id, userID uuid.UUID, tokenType string, tokenHash []byte, expiresAt time.Time) error
+
+	// GetTokenByHash fetches a valid, unused, non-expired token by its SHA-256 hash.
+	// Returns pgx.ErrNoRows if not found, already used, or expired.
+	GetTokenByHash(ctx context.Context, tokenHash []byte, tokenType string) (*store.Token, error)
+
+	// MarkTokenUsed sets used_at = NOW() for the token with the given hash.
+	// Returns pgx.ErrNoRows if no matching unused token exists.
+	MarkTokenUsed(ctx context.Context, tokenHash []byte) error
+
+	// SetEmailConfirmedAt sets email_confirmed_at = NOW() for userID if not already confirmed.
+	SetEmailConfirmedAt(ctx context.Context, userID uuid.UUID) error
 }
 
 // RateLimiter checks and records rate limit state for a given key and policy.
@@ -435,4 +451,83 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"message": "password updated"}`))
+}
+
+// PasswordReset handles POST /auth/password/reset -- initiates the reset flow for a given email.
+func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
+	// Get email from req
+	var pwdResetInput struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&pwdResetInput); err != nil {
+		BadRequest(w, r, "invalid request")
+		return
+	}
+
+	email := strings.ToLower(pwdResetInput.Email)
+
+	// Check if email rate-limited, if so, err != nil, return
+	err := h.RL.Allow(r.Context(), fmt.Sprintf("reset:email:%s", email), PasswordResetPolicy)
+	if err != nil {
+		if errors.Is(err, store.ErrRateLimitExceeded) {
+			logInfo(r, "password reset rate limited", "email", email)
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Get user
+	user, err := h.PS.GetUserByEmail(r.Context(), email)
+	if err != nil {
+		// Generic 200 -- no enumeration (caller cannot learn whether email exists)
+		logInfo(r, "password reset requested for unknown email")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"message":"if that email exists, a reset link has been sent"}`))
+		return
+	}
+
+	// genericResetResponse always returns the same 200, to destroy enumeration after user lookup.
+	genericResetResponse := func() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"message":"if that email exists, a reset link has been sent"}`))
+	}
+
+	// Gen token
+	token, tokenHash, err := GenerateToken()
+	if err != nil {
+		logError(r, "failed to generate password reset token", "error", err)
+		genericResetResponse()
+		return
+	}
+
+	// Create id for token
+	tokenID, err := uuid.NewV7()
+	if err != nil {
+		logError(r, "failed to generate token id", "error", err)
+		genericResetResponse()
+		return
+	}
+
+	// Add token to pg db, expires in 1 hour
+	err = h.PS.CreateToken(r.Context(), tokenID, user.ID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
+	if err != nil {
+		logError(r, "failed to persist password reset token", "error", err, "user_id", user.ID)
+		genericResetResponse()
+		return
+	}
+
+	// Send pwd reset
+	err = h.ML.SendPasswordReset(r.Context(), *user.Email, base64.RawURLEncoding.EncodeToString(token[:]))
+	if err != nil {
+		logError(r, "failed to send password reset email", "error", err, "user_id", user.ID)
+		genericResetResponse()
+		return
+	}
+
+	logInfo(r, "password reset email sent", "user_id", user.ID)
+	genericResetResponse()
 }
