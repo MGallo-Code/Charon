@@ -3,6 +3,7 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -478,22 +479,20 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get user
-	user, err := h.PS.GetUserByEmail(r.Context(), email)
-	if err != nil {
-		// Generic 200 -- no enumeration (caller cannot learn whether email exists)
-		logInfo(r, "password reset requested for unknown email")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"message":"if that email exists, a reset link has been sent"}`))
-		return
-	}
-
 	// genericResetResponse always returns the same 200, to destroy enumeration after user lookup.
 	genericResetResponse := func() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"message":"if that email exists, a reset link has been sent"}`))
+	}
+
+	// Get user
+	user, err := h.PS.GetUserByEmail(r.Context(), email)
+	if err != nil {
+		// Generic 200 -- no enumeration (caller cannot learn whether email exists)
+		logInfo(r, "password reset requested for unknown email")
+		genericResetResponse()
+		return
 	}
 
 	// Gen token
@@ -530,4 +529,71 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 
 	logInfo(r, "password reset email sent", "user_id", user.ID)
 	genericResetResponse()
+}
+
+// PasswordConfirm handles POST /auth/password/confirm -- completes the reset using the token from the email link.
+func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
+	// Decode request body, expect current_password and new_password
+	var pwdConfirmInput struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&pwdConfirmInput); err != nil {
+		logWarn(r, "failed to decode reset password confirm input", "error", err)
+		BadRequest(w, r, "error decoding request body")
+		return
+	}
+
+	// Validate new pwd
+	if invalidMsg := ValidatePassword(pwdConfirmInput.NewPassword); invalidMsg != "" {
+		BadRequest(w, r, invalidMsg)
+		return
+	}
+
+	// Decode and hash token
+	tokenStr, err := base64.RawURLEncoding.DecodeString(pwdConfirmInput.Token)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+	tokenHash := sha256.Sum256(tokenStr)
+
+	// Use hashed token to consume token in db
+	//token, err := h.PS.ConsumeToken(r.Context(), tokenHash[:])
+	token := &store.Token{
+		TokenHash: tokenHash[:],
+	}
+
+	// Hash new_password with HashPassword.
+	newPassword, err := HashPassword(pwdConfirmInput.NewPassword)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Update the hash in Postgres with UpdateUserPassword.
+	err = h.PS.UpdateUserPassword(r.Context(), token.UserID, newPassword)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Delete all sessions from Redis (non-fatal, log warn on error).
+	err = h.RS.DeleteAllUserSessions(r.Context(), token.UserID)
+	if err != nil {
+		logWarn(r, "failed to delete all sessions from redis", "error", err)
+	}
+
+	// Delete all sessions from Postgres (fatal, return 500 on error).
+	err = h.PS.DeleteAllUserSessions(r.Context(), token.UserID)
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Log success and return 200
+	logInfo(r, "user changed password", "user_id", token.UserID)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message": "password updated"}`))
 }
