@@ -94,6 +94,13 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string, policy store.RateLimit) error
 }
 
+// RateLimitPolicies holds rate limit policies for all auth endpoints.
+// Configured via RATE_* env vars with defaults set in config.go.
+type RateLimitPolicies struct {
+	LoginEmail    store.RateLimit
+	PasswordReset store.RateLimit
+}
+
 // dummyPasswordHash generates a live Argon2id hash at startup for timing attack mitigation.
 // When a user doesn't exist, verify against this so both paths take equal time (~100ms).
 // Generated from live constants so it tracks any future parameter changes in password.go.
@@ -104,10 +111,11 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 
 // AuthHandler holds dependencies for all /auth/* HTTP handlers and middleware.
 type AuthHandler struct {
-	PS Store
-	RS SessionCache
-	RL RateLimiter
-	ML mail.Mailer
+	PS       Store
+	RS       SessionCache
+	RL       RateLimiter
+	ML       mail.Mailer
+	Policies RateLimitPolicies
 }
 
 // RegisterByEmail handles POST /register — email + password signup.
@@ -204,7 +212,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.RL.Allow(r.Context(), "login:email:"+email, LoginEmailPolicy); err != nil {
+	if err := h.RL.Allow(r.Context(), "login:email:"+email, h.Policies.LoginEmail); err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
 			logInfo(r, "login rate limited", "email", email)
 			TooManyRequests(w)
@@ -369,22 +377,6 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	OK(w, "logged out")
 }
 
-// LoginEmailPolicy is the rate limit applied per email address on login attempts.
-// Applied in LoginByEmail before any DB work -- rejected requests never reach Argon2id.
-var LoginEmailPolicy = store.RateLimit{
-	MaxAttempts: 10,
-	Window:      10 * time.Minute,
-	LockoutTTL:  15 * time.Minute,
-}
-
-// PasswordResetPolicy is the rate limit applied per email address on password reset requests.
-// Keyed on "reset:email:<email>" before user lookup -- intentionally pre-lookup to prevent
-// timing-based enumeration (post-lookup keying would reveal whether an email exists).
-var PasswordResetPolicy = store.RateLimit{
-	MaxAttempts: 3,
-	Window:      1 * time.Hour,
-	LockoutTTL:  1 * time.Hour,
-}
 
 // PasswordChange handles POST /password/change...updates the authenticated user's password.
 // Verifies current password, re-hashes the new one, then invalidates all sessions.
@@ -491,7 +483,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.RL.Allow(r.Context(), "reset:email:"+email, PasswordResetPolicy)
+	err := h.RL.Allow(r.Context(), "reset:email:"+email, h.Policies.PasswordReset)
 	if err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
 			logInfo(r, "password reset rate limited", "email", email)

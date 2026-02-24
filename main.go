@@ -92,7 +92,24 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string) error {
 	var ml mail.Mailer = &mail.NopMailer{}
 
 	// Create AuthHandler
-	h := auth.AuthHandler{PS: ps, RS: rs, RL: rl, ML: ml}
+	h := auth.AuthHandler{
+		PS: ps,
+		RS: rs,
+		RL: rl,
+		ML: ml,
+		Policies: auth.RateLimitPolicies{
+			LoginEmail: store.RateLimit{
+				MaxAttempts: cfg.RateLoginEmailMax,
+				Window:      cfg.RateLoginEmailWindow,
+				LockoutTTL:  cfg.RateLoginEmailLockout,
+			},
+			PasswordReset: store.RateLimit{
+				MaxAttempts: cfg.RateResetMax,
+				Window:      cfg.RateResetWindow,
+				LockoutTTL:  cfg.RateResetLockout,
+			},
+		},
+	}
 
 	// Bind listener; ":0" picks a free port (useful in tests).
 	ln, err := net.Listen("tcp", ":"+cfg.Port)

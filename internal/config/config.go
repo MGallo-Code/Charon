@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds all env configuration vars for Charon.
@@ -17,6 +19,18 @@ type Config struct {
 	Port         string
 	CookieDomain string
 	LogLevel     slog.Level
+
+	// Rate limit policy for login attempts per email.
+	// Defaults: max=10, window=10m, lockout=15m.
+	RateLoginEmailMax     int
+	RateLoginEmailWindow  time.Duration
+	RateLoginEmailLockout time.Duration
+
+	// Rate limit policy for password reset requests per email.
+	// Defaults: max=3, window=1h, lockout=1h.
+	RateResetMax     int
+	RateResetWindow  time.Duration
+	RateResetLockout time.Duration
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
@@ -58,5 +72,44 @@ func LoadConfig() (*Config, error) {
 		cfg.LogLevel = slog.LevelInfo
 	}
 
+	// Rate limit: login by email. All three fields required -- if any are missing or invalid,
+	// fall back to the default so a misconfigured env doesn't silently disable rate limiting.
+	cfg.RateLoginEmailMax = envInt("RATE_LOGIN_EMAIL_MAX", 10)
+	cfg.RateLoginEmailWindow = envDuration("RATE_LOGIN_EMAIL_WINDOW", 10*time.Minute)
+	cfg.RateLoginEmailLockout = envDuration("RATE_LOGIN_EMAIL_LOCKOUT", 15*time.Minute)
+
+	// Rate limit: password reset.
+	cfg.RateResetMax = envInt("RATE_RESET_MAX", 3)
+	cfg.RateResetWindow = envDuration("RATE_RESET_WINDOW", 1*time.Hour)
+	cfg.RateResetLockout = envDuration("RATE_RESET_LOCKOUT", 1*time.Hour)
+
 	return cfg, nil
+}
+
+// envInt reads an env var as int, returning def if missing or unparseable.
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		slog.Warn("invalid env var, using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return n
+}
+
+// envDuration reads an env var as time.Duration, returning def if missing or unparseable.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		slog.Warn("invalid env var, using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return d
 }
