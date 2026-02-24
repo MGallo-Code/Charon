@@ -606,6 +606,8 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 		logWarn(r, "failed to set email_confirmed_at after password reset", "error", err, "user_id", userID)
 	}
 
+	// No ClearSessionCookie -- reset flow is unauthenticated; caller has no session cookie.
+	// Sessions already purged above. Any stale cookie from a prior login will 401 on next use.
 	logInfo(r, "user reset password", "user_id", userID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
