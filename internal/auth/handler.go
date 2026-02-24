@@ -272,11 +272,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	csrfTokenEncoded := base64.RawURLEncoding.EncodeToString(csrfToken[:])
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	resp, _ := json.Marshal(map[string]string{
-		"user_id":    user.ID.String(),
-		"csrf_token": csrfTokenEncoded,
-	})
-	w.Write(resp)
+	w.Write([]byte(`{"user_id":"` + user.ID.String() + `","csrf_token":"` + csrfTokenEncoded + `"}`))
 }
 
 // LogoutAll handles POST /logout-all — ends every session for the authenticated user.
