@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -183,6 +182,18 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email := strings.ToLower(loginInput.Email)
+
+	// Validate before rate-limit -- keeps garbage strings out of Redis keys.
+	// Both invalid email and missing password return generic 401 (no enumeration).
+	if msg := ValidateEmail(email); msg != "" {
+		Unauthorized(w, r, "invalid credentials")
+		return
+	}
+	if loginInput.Password == "" {
+		Unauthorized(w, r, "invalid credentials")
+		return
+	}
+
 	if err := h.RL.Allow(r.Context(), "login:email:"+email, LoginEmailPolicy); err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
 			logInfo(r, "login rate limited", "email", email)
@@ -190,16 +201,6 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		InternalServerError(w, r, err)
-		return
-	}
-
-	// Invalid email or missing password -- both return generic 401 (no enumeration).
-	if msg := ValidateEmail(email); msg != "" {
-		Unauthorized(w, r, "invalid credentials")
-		return
-	}
-	if loginInput.Password == "" {
-		Unauthorized(w, r, "invalid credentials")
 		return
 	}
 
@@ -467,8 +468,13 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.ToLower(pwdResetInput.Email)
 
-	// Check if email rate-limited, if so, err != nil, return
-	err := h.RL.Allow(r.Context(), fmt.Sprintf("reset:email:%s", email), PasswordResetPolicy)
+	// Validate before rate-limit -- keeps garbage strings out of Redis keys.
+	if msg := ValidateEmail(email); msg != "" {
+		BadRequest(w, r, msg)
+		return
+	}
+
+	err := h.RL.Allow(r.Context(), "reset:email:"+email, PasswordResetPolicy)
 	if err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
 			logInfo(r, "password reset rate limited", "email", email)
@@ -476,12 +482,6 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		InternalServerError(w, r, err)
-		return
-	}
-
-	// validate email
-	if msg := ValidateEmail(email); msg != "" {
-		BadRequest(w, r, msg)
 		return
 	}
 
