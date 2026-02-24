@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     token_hash BYTEA UNIQUE NOT NULL,
     csrf_token BYTEA NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
-    ip_address INET,
+    ip_address TEXT,
     user_agent TEXT,
     created_at TIMESTAMPTZ NOT NULL
         DEFAULT NOW(),

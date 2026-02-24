@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -262,12 +261,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		expiresAt = time.Now().Add(24 * time.Hour)
 	}
 
-	// RemoteAddr includes port — INET column expects bare IP.
-	// Empty string on parse failure is safer than storing "host:port" which Postgres rejects.
-	ipAddr, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ipAddr = ""
-	}
+	ipAddr := r.RemoteAddr
 	userAgent := r.UserAgent()
 
 	err = h.PS.CreateSession(r.Context(), sessionID, user.ID, tokenHash[:], csrfToken[:], expiresAt, &ipAddr, &userAgent)

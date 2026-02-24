@@ -227,7 +227,7 @@ func TestCreateSession(t *testing.T) {
 		)
 		err = testStore.pool.QueryRow(ctx, `
 			SELECT
-				id, user_id, token_hash, csrf_token, expires_at, ip_address::TEXT, user_agent, created_at
+				id, user_id, token_hash, csrf_token, expires_at, ip_address, user_agent, created_at
 			FROM sessions
 			WHERE id = $1
 		`, sessionID).Scan(&dbID, &dbUserID, &dbTokenHash, &dbCSRFToken, &dbExpiresAt, &dbIP, &dbUA, &dbCreatedAt)
@@ -250,8 +250,8 @@ func TestCreateSession(t *testing.T) {
 		if !dbExpiresAt.Equal(expiresAt) {
 			t.Errorf("expires_at: expected %v, got %v", expiresAt, dbExpiresAt)
 		}
-		if dbIP == nil || *dbIP != "192.168.1.1/32" {
-			t.Errorf("ip_address: expected 192.168.1.1/32, got %v", dbIP)
+		if dbIP == nil || *dbIP != "192.168.1.1" {
+			t.Errorf("ip_address: expected 192.168.1.1, got %v", dbIP)
 		}
 		if dbUA == nil || *dbUA != "Mozilla/5.0" {
 			t.Errorf("user_agent: expected Mozilla/5.0, got %v", dbUA)
