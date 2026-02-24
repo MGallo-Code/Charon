@@ -417,6 +417,93 @@ func TestWiring_LogoutAll_DoesNotAffectOtherUser(t *testing.T) {
 	}
 }
 
+// --- PasswordReset wiring tests ---
+
+// doPasswordReset calls PasswordReset with the given email; fatals if response is not 200.
+func doPasswordReset(t *testing.T, h *AuthHandler, email string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := strings.NewReader(`{"email":"` + email + `"}`)
+	r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", body)
+	w := httptest.NewRecorder()
+	h.PasswordReset(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("doPasswordReset: expected 200, got %d", w.Code)
+	}
+	return w
+}
+
+// doPasswordConfirm calls PasswordConfirm with the given token and new password.
+func doPasswordConfirm(t *testing.T, h *AuthHandler, token, newPassword string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := strings.NewReader(`{"token":"` + token + `","new_password":"` + newPassword + `"}`)
+	r := httptest.NewRequest(http.MethodPost, "/auth/password/confirm", body)
+	w := httptest.NewRecorder()
+	h.PasswordConfirm(w, r)
+	return w
+}
+
+// TestWiring_PasswordReset_TokenRoundTrip verifies the token encoding contract between
+// PasswordReset and PasswordConfirm. Both share one MockStore and one MockMailer.
+// If either side encodes differently, ConsumeToken misses and PasswordConfirm returns 400.
+func TestWiring_PasswordReset_TokenRoundTrip(t *testing.T) {
+	user, email := newUserWithPassword(t, "oldpassword1")
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
+	mailer := &testutil.MockMailer{}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: mailer}
+
+	// PasswordReset: stores SHA-256 hash in ms.Tokens, sends base64 raw token to mailer.
+	doPasswordReset(t, h, email)
+
+	token := mailer.LastSentToken
+	if token == "" {
+		t.Fatal("PasswordReset: expected mailer to capture token, got empty string")
+	}
+
+	// PasswordConfirm: decodes base64 token, rehashes, calls ConsumeToken with same hash.
+	// Any encoding mismatch causes ConsumeToken to miss (400 instead of 200).
+	w := doPasswordConfirm(t, h, token, "newpassword1")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("PasswordConfirm: expected 200, got %d (token encoding mismatch?)", w.Code)
+	}
+}
+
+// TestWiring_PasswordConfirm_ClearsSessions verifies PasswordConfirm removes the user's
+// sessions from both MockStore and MockCache after a successful confirm.
+func TestWiring_PasswordConfirm_ClearsSessions(t *testing.T) {
+	user, email := newUserWithPassword(t, "oldpassword1")
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
+	mailer := &testutil.MockMailer{}
+	h := &AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: mailer}
+
+	// Two logins — two sessions for the same user.
+	doLogin(t, h, email, "oldpassword1")
+	doLogin(t, h, email, "oldpassword1")
+
+	if len(mc.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions in cache after two logins, got %d", len(mc.Sessions))
+	}
+
+	// Initiate reset and capture token.
+	doPasswordReset(t, h, email)
+	token := mailer.LastSentToken
+
+	// Confirm -- should clear all sessions for this user in both store and cache.
+	w := doPasswordConfirm(t, h, token, "newpassword1")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PasswordConfirm: expected 200, got %d", w.Code)
+	}
+	if len(mc.Sessions) != 0 {
+		t.Errorf("expected 0 sessions in cache after password confirm, got %d", len(mc.Sessions))
+	}
+	if len(ms.Sessions) != 0 {
+		t.Errorf("expected 0 sessions in store after password confirm, got %d", len(ms.Sessions))
+	}
+}
+
 // TestWiring_Logout_DoesNotAffectOtherUser verifies User A's logout only removes
 // User A's current session, leaving User B's sessions intact.
 func TestWiring_Logout_DoesNotAffectOtherUser(t *testing.T) {
