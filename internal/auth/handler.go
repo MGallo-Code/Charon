@@ -182,8 +182,19 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	email := strings.ToLower(loginInput.Email)
+	if err := h.RL.Allow(r.Context(), "login:email:"+email, LoginEmailPolicy); err != nil {
+		if errors.Is(err, store.ErrRateLimitExceeded) {
+			logInfo(r, "login rate limited", "email", email)
+			TooManyRequests(w)
+			return
+		}
+		InternalServerError(w, r, err)
+		return
+	}
+
 	// Invalid email or missing password -- both return generic 401 (no enumeration).
-	if msg := ValidateEmail(loginInput.Email); msg != "" {
+	if msg := ValidateEmail(email); msg != "" {
 		Unauthorized(w, r, "invalid credentials")
 		return
 	}
@@ -192,7 +203,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.PS.GetUserByEmail(r.Context(), loginInput.Email)
+	user, err := h.PS.GetUserByEmail(r.Context(), email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Run dummy hash to equalise timing with found-user path.
@@ -358,9 +369,6 @@ var PasswordResetPolicy = store.RateLimit{
 	LockoutTTL:  1 * time.Hour,
 }
 
-// TODO: LoginByEmail -- add h.RL.Allow(ctx, "login:email:"+email, LoginEmailPolicy) after input
-// decode and before GetUserByEmail. Return 429 on ErrRateLimitExceeded.
-
 // PasswordChange handles POST /password/change...updates the authenticated user's password.
 // Verifies current password, re-hashes the new one, then invalidates all sessions.
 // Returns 200 on success, 400 for invalid input, 401 for wrong current password, 500 for server errors.
@@ -462,7 +470,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
 			logInfo(r, "password reset rate limited", "email", email)
-			w.WriteHeader(http.StatusTooManyRequests)
+			TooManyRequests(w)
 			return
 		}
 		InternalServerError(w, r, err)
