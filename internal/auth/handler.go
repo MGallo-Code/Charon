@@ -80,6 +80,10 @@ type Store interface {
 
 	// SetEmailConfirmedAt sets email_confirmed_at = NOW() for userID if not already confirmed.
 	SetEmailConfirmedAt(ctx context.Context, userID uuid.UUID) error
+
+	// WriteAuditLog inserts a single audit event into audit_logs.
+	// Non-fatal: callers log the error but never fail the request on audit write failure.
+	WriteAuditLog(ctx context.Context, entry store.AuditEntry) error
 }
 
 // RateLimiter checks and records rate limit state for a given key and policy.

@@ -36,6 +36,7 @@ type MockStore struct {
 	MarkTokenUsedErr       error
 	ConsumeTokenErr        error
 	SetEmailConfirmedAtErr error
+	WriteAuditLogErr       error
 
 	Users    map[string]*store.User    // keyed by email
 	Sessions map[string]*store.Session // keyed by string(tokenHash)
@@ -218,6 +219,10 @@ func (m *MockStore) ConsumeToken(_ context.Context, tokenHash []byte, tokenType 
 
 func (m *MockStore) SetEmailConfirmedAt(_ context.Context, userID uuid.UUID) error {
 	return m.SetEmailConfirmedAtErr
+}
+
+func (m *MockStore) WriteAuditLog(_ context.Context, _ store.AuditEntry) error {
+	return m.WriteAuditLogErr
 }
 
 func (m *MockStore) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) error {
