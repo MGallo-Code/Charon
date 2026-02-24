@@ -23,17 +23,22 @@ import (
 // Use NewMockStore to seed users; or construct directly and set *Err fields for error-path tests.
 type MockStore struct {
 	// Error injection...zero value means no error
-	CreateUserErr         error
-	GetUserByEmailErr     error
-	GetPwdHashByUserIDErr error
-	CreateSessionErr      error
-	GetSessionErr         error
-	UpdateUserPasswordErr error
-	DeleteSessionErr      error
-	DeleteAllSessionsErr  error
+	CreateUserErr          error
+	GetUserByEmailErr      error
+	GetPwdHashByUserIDErr  error
+	CreateSessionErr       error
+	GetSessionErr          error
+	UpdateUserPasswordErr  error
+	DeleteSessionErr       error
+	DeleteAllSessionsErr   error
+	CreateTokenErr         error
+	GetTokenByHashErr      error
+	MarkTokenUsedErr       error
+	SetEmailConfirmedAtErr error
 
 	Users    map[string]*store.User    // keyed by email
 	Sessions map[string]*store.Session // keyed by string(tokenHash)
+	Tokens   map[string]*store.Token  // keyed by string(tokenHash)
 
 	mu sync.Mutex
 }
@@ -148,6 +153,57 @@ func (m *MockStore) DeleteSession(_ context.Context, tokenHash []byte) error {
 	return nil
 }
 
+func (m *MockStore) CreateToken(_ context.Context, id, userID uuid.UUID, tokenType string, tokenHash []byte, expiresAt time.Time) error {
+	if m.CreateTokenErr != nil {
+		return m.CreateTokenErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Tokens == nil {
+		m.Tokens = make(map[string]*store.Token)
+	}
+	m.Tokens[string(tokenHash)] = &store.Token{
+		ID:        id,
+		UserID:    userID,
+		TokenType: tokenType,
+		TokenHash: tokenHash,
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+func (m *MockStore) GetTokenByHash(_ context.Context, tokenHash []byte, tokenType string) (*store.Token, error) {
+	if m.GetTokenByHashErr != nil {
+		return nil, m.GetTokenByHashErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.Tokens[string(tokenHash)]
+	if !ok {
+		return nil, fmt.Errorf("fetching token by hash: %w", pgx.ErrNoRows)
+	}
+	return t, nil
+}
+
+func (m *MockStore) MarkTokenUsed(_ context.Context, tokenHash []byte) error {
+	if m.MarkTokenUsedErr != nil {
+		return m.MarkTokenUsedErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.Tokens[string(tokenHash)]
+	if !ok {
+		return fmt.Errorf("marking token as used: %w", pgx.ErrNoRows)
+	}
+	now := time.Now()
+	t.UsedAt = &now
+	return nil
+}
+
+func (m *MockStore) SetEmailConfirmedAt(_ context.Context, userID uuid.UUID) error {
+	return m.SetEmailConfirmedAtErr
+}
+
 func (m *MockStore) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) error {
 	if m.DeleteAllSessionsErr != nil {
 		return m.DeleteAllSessionsErr
@@ -232,4 +288,29 @@ func (m *MockCache) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) e
 	}
 	m.mu.Unlock()
 	return nil
+}
+
+// MockRateLimiter implements auth.RateLimiter for tests.
+// Set AllowErr to inject a rate limit or unexpected error.
+type MockRateLimiter struct {
+	AllowErr error
+}
+
+func (m *MockRateLimiter) Allow(_ context.Context, _ string, _ store.RateLimit) error {
+	return m.AllowErr
+}
+
+// MockMailer implements mail.Mailer for tests.
+// Set SendPasswordResetErr to inject send failures.
+// LastSentTo and LastSentToken capture the most recent call's arguments.
+type MockMailer struct {
+	SendPasswordResetErr error
+	LastSentTo           string
+	LastSentToken        string
+}
+
+func (m *MockMailer) SendPasswordReset(_ context.Context, toEmail, token string) error {
+	m.LastSentTo = toEmail
+	m.LastSentToken = token
+	return m.SendPasswordResetErr
 }
