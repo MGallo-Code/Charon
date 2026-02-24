@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"testing"
+	"time"
 )
 
 // --- LoadConfig ---
@@ -137,6 +138,178 @@ func TestLoadConfig(t *testing.T) {
 		}
 		if cfg.LogLevel != slog.LevelInfo {
 			t.Errorf("LogLevel: expected %v, got %v", slog.LevelInfo, cfg.LogLevel)
+		}
+	})
+}
+
+// --- Rate limit config ---
+
+func TestRateLimitConfig(t *testing.T) {
+	setRequired := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("DATABASE_URL", "postgres://localhost/charon")
+		t.Setenv("REDIS_URL", "redis://localhost:6379")
+	}
+
+	t.Run("login email defaults when vars absent", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_LOGIN_EMAIL_MAX", "")
+		t.Setenv("RATE_LOGIN_EMAIL_WINDOW", "")
+		t.Setenv("RATE_LOGIN_EMAIL_LOCKOUT", "")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateLoginEmailMax != 10 {
+			t.Errorf("RateLoginEmailMax: expected 10, got %d", cfg.RateLoginEmailMax)
+		}
+		if cfg.RateLoginEmailWindow != 10*time.Minute {
+			t.Errorf("RateLoginEmailWindow: expected 10m, got %v", cfg.RateLoginEmailWindow)
+		}
+		if cfg.RateLoginEmailLockout != 15*time.Minute {
+			t.Errorf("RateLoginEmailLockout: expected 15m, got %v", cfg.RateLoginEmailLockout)
+		}
+	})
+
+	t.Run("password reset defaults when vars absent", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_RESET_MAX", "")
+		t.Setenv("RATE_RESET_WINDOW", "")
+		t.Setenv("RATE_RESET_LOCKOUT", "")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateResetMax != 3 {
+			t.Errorf("RateResetMax: expected 3, got %d", cfg.RateResetMax)
+		}
+		if cfg.RateResetWindow != 1*time.Hour {
+			t.Errorf("RateResetWindow: expected 1h, got %v", cfg.RateResetWindow)
+		}
+		if cfg.RateResetLockout != 1*time.Hour {
+			t.Errorf("RateResetLockout: expected 1h, got %v", cfg.RateResetLockout)
+		}
+	})
+
+	t.Run("valid login email vars parse correctly", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_LOGIN_EMAIL_MAX", "5")
+		t.Setenv("RATE_LOGIN_EMAIL_WINDOW", "5m")
+		t.Setenv("RATE_LOGIN_EMAIL_LOCKOUT", "30m")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateLoginEmailMax != 5 {
+			t.Errorf("RateLoginEmailMax: expected 5, got %d", cfg.RateLoginEmailMax)
+		}
+		if cfg.RateLoginEmailWindow != 5*time.Minute {
+			t.Errorf("RateLoginEmailWindow: expected 5m, got %v", cfg.RateLoginEmailWindow)
+		}
+		if cfg.RateLoginEmailLockout != 30*time.Minute {
+			t.Errorf("RateLoginEmailLockout: expected 30m, got %v", cfg.RateLoginEmailLockout)
+		}
+	})
+
+	t.Run("valid password reset vars parse correctly", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_RESET_MAX", "5")
+		t.Setenv("RATE_RESET_WINDOW", "2h")
+		t.Setenv("RATE_RESET_LOCKOUT", "3h")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateResetMax != 5 {
+			t.Errorf("RateResetMax: expected 5, got %d", cfg.RateResetMax)
+		}
+		if cfg.RateResetWindow != 2*time.Hour {
+			t.Errorf("RateResetWindow: expected 2h, got %v", cfg.RateResetWindow)
+		}
+		if cfg.RateResetLockout != 3*time.Hour {
+			t.Errorf("RateResetLockout: expected 3h, got %v", cfg.RateResetLockout)
+		}
+	})
+
+	t.Run("invalid RATE_LOGIN_EMAIL_MAX falls back to default", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_LOGIN_EMAIL_MAX", "bad")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateLoginEmailMax != 10 {
+			t.Errorf("RateLoginEmailMax: expected default 10, got %d", cfg.RateLoginEmailMax)
+		}
+	})
+
+	t.Run("negative RATE_LOGIN_EMAIL_MAX falls back to default", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_LOGIN_EMAIL_MAX", "-1")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateLoginEmailMax != 10 {
+			t.Errorf("RateLoginEmailMax: expected default 10, got %d", cfg.RateLoginEmailMax)
+		}
+	})
+
+	t.Run("zero RATE_LOGIN_EMAIL_MAX falls back to default", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_LOGIN_EMAIL_MAX", "0")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateLoginEmailMax != 10 {
+			t.Errorf("RateLoginEmailMax: expected default 10, got %d", cfg.RateLoginEmailMax)
+		}
+	})
+
+	t.Run("invalid RATE_LOGIN_EMAIL_WINDOW falls back to default", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_LOGIN_EMAIL_WINDOW", "bad")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateLoginEmailWindow != 10*time.Minute {
+			t.Errorf("RateLoginEmailWindow: expected default 10m, got %v", cfg.RateLoginEmailWindow)
+		}
+	})
+
+	t.Run("invalid RATE_RESET_MAX falls back to default", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_RESET_MAX", "bad")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateResetMax != 3 {
+			t.Errorf("RateResetMax: expected default 3, got %d", cfg.RateResetMax)
+		}
+	})
+
+	t.Run("invalid RATE_RESET_WINDOW falls back to default", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("RATE_RESET_WINDOW", "bad")
+
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		if cfg.RateResetWindow != 1*time.Hour {
+			t.Errorf("RateResetWindow: expected default 1h, got %v", cfg.RateResetWindow)
 		}
 	})
 }
