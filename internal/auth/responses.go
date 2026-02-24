@@ -31,7 +31,9 @@ func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 func Unauthorized(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	w.Write([]byte(`{"message":"` + message + `"}`))
+	json.NewEncoder(w).Encode(struct {
+		Message string `json:"message"`
+	}{message})
 }
 
 // Forbidden returns a 403 JSON response with a generic message.
@@ -46,5 +48,7 @@ func Forbidden(w http.ResponseWriter) {
 func OK(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"message":"` + message + `"}`))
+	json.NewEncoder(w).Encode(struct {
+		Message string `json:"message"`
+	}{message})
 }
