@@ -895,7 +895,7 @@ func TestConsumeToken(t *testing.T) {
 		tokenHash := sha256.Sum256([]byte("test-consume-token"))
 		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
 
-		gotUserID, err := testStore.ConsumeToken(ctx, "password_reset", tokenHash[:])
+		gotUserID, err := testStore.ConsumeToken(ctx, tokenHash[:], "password_reset")
 		if err != nil {
 			t.Fatalf("ConsumeToken failed: %v", err)
 		}
@@ -924,12 +924,12 @@ func TestConsumeToken(t *testing.T) {
 		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
 
 		// First consume succeeds
-		if _, err := testStore.ConsumeToken(ctx, "password_reset", tokenHash[:]); err != nil {
+		if _, err := testStore.ConsumeToken(ctx, tokenHash[:], "password_reset"); err != nil {
 			t.Fatalf("first ConsumeToken failed: %v", err)
 		}
 
 		// Second consume must fail
-		_, err := testStore.ConsumeToken(ctx, "password_reset", tokenHash[:])
+		_, err := testStore.ConsumeToken(ctx, tokenHash[:], "password_reset")
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("expected pgx.ErrNoRows for already-used token, got: %v", err)
 		}
@@ -943,7 +943,7 @@ func TestConsumeToken(t *testing.T) {
 		tokenHash := sha256.Sum256([]byte("test-consume-expired"))
 		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(-1*time.Second))
 
-		_, err := testStore.ConsumeToken(ctx, "password_reset", tokenHash[:])
+		_, err := testStore.ConsumeToken(ctx, tokenHash[:], "password_reset")
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("expected pgx.ErrNoRows for expired token, got: %v", err)
 		}
@@ -957,7 +957,7 @@ func TestConsumeToken(t *testing.T) {
 		tokenHash := sha256.Sum256([]byte("test-consume-wrong-type"))
 		mustCreateToken(t, ctx, userID, "password_reset", tokenHash[:], time.Now().Add(1*time.Hour))
 
-		_, err := testStore.ConsumeToken(ctx, "email_verification", tokenHash[:])
+		_, err := testStore.ConsumeToken(ctx, tokenHash[:], "email_verification")
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("expected pgx.ErrNoRows for wrong token type, got: %v", err)
 		}
