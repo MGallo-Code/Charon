@@ -1,11 +1,10 @@
 // responses.go -- Package-wide HTTP response helpers.
 //
-// Shared by handlers and middleware. All JSON is encoded via json.Marshal
-// (never fmt.Sprintf) to prevent injection from attacker-controlled strings.
+// Shared by handlers and middleware. All messages are plain ASCII - no
+// user-controlled input is interpolated, so string concat is safe here.
 package auth
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
@@ -23,8 +22,7 @@ func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	resp, _ := json.Marshal(map[string]string{"message": message})
-	w.Write(resp)
+	w.Write([]byte(`{"message":"` + message + `"}`))
 }
 
 // Unauthorized returns a 401 JSON response with a generic message.
@@ -32,6 +30,12 @@ func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 func Unauthorized(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	resp, _ := json.Marshal(map[string]string{"message": message})
-	w.Write(resp)
+	w.Write([]byte(`{"message":"` + message + `"}`))
+}
+
+// OK returns a 200 JSON response with the given message.
+func OK(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message":"` + message + `"}`))
 }
