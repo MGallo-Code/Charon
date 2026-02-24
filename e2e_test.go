@@ -299,6 +299,81 @@ func TestE2E_FullRoundTrip_PasswordChange(t *testing.T) {
 	_, _ = e2eLogin(t, email, newPassword)
 }
 
+// TestE2E_PasswordReset_GenericResponse verifies that POST /password/reset returns 200
+// for both existing and non-existent emails -- caller cannot distinguish the two.
+func TestE2E_PasswordReset_GenericResponse(t *testing.T) {
+	skipIfNoE2E(t)
+
+	email := fmt.Sprintf("e2e-pwdreset-%d@example.com", time.Now().UnixNano())
+	e2eRegister(t, email, "resetpassword1")
+
+	// Non-existent email must return 200.
+	resp, err := http.Post(e2eServerURL+"/password/reset", "application/json",
+		strings.NewReader(`{"email":"doesnotexist-e2e@example.com"}`))
+	if err != nil {
+		t.Fatalf("POST /password/reset (unknown): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("unknown email: expected 200, got %d", resp.StatusCode)
+	}
+
+	// Registered email must also return 200.
+	resp, err = http.Post(e2eServerURL+"/password/reset", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q}`, email)))
+	if err != nil {
+		t.Fatalf("POST /password/reset (registered): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("registered email: expected 200, got %d", resp.StatusCode)
+	}
+}
+
+// TestE2E_PasswordConfirm_InvalidToken verifies that POST /password/confirm rejects
+// a bogus token with 400 -- the route is mounted and token validation runs.
+func TestE2E_PasswordConfirm_InvalidToken(t *testing.T) {
+	skipIfNoE2E(t)
+
+	resp, err := http.Post(e2eServerURL+"/password/confirm", "application/json",
+		strings.NewReader(`{"token":"totallybogustoken","new_password":"newpassword1"}`))
+	if err != nil {
+		t.Fatalf("POST /password/confirm: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bogus token: expected 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestE2E_PasswordReset_RouteIsAccessible verifies both password reset routes are mounted
+// and reachable -- no 404 or 405 -- and that basic validation runs end-to-end.
+func TestE2E_PasswordReset_RouteIsAccessible(t *testing.T) {
+	skipIfNoE2E(t)
+
+	// /password/reset returns 200 for any email (enumeration-safe).
+	resp, err := http.Post(e2eServerURL+"/password/reset", "application/json",
+		strings.NewReader(`{"email":"doesnotexist@example.com"}`))
+	if err != nil {
+		t.Fatalf("POST /password/reset: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("/password/reset: expected 200, got %d", resp.StatusCode)
+	}
+
+	// /password/confirm returns 400 for a bad token (route mounted, validation runs).
+	resp, err = http.Post(e2eServerURL+"/password/confirm", "application/json",
+		strings.NewReader(`{"token":"bogustoken","new_password":"newpassword1"}`))
+	if err != nil {
+		t.Fatalf("POST /password/confirm: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("/password/confirm: expected 400, got %d", resp.StatusCode)
+	}
+}
+
 // TestE2E_PasswordChange_DoesNotAffectOtherUser verifies that User A's password change
 // does not affect User B's credentials or session against real Postgres + Redis.
 func TestE2E_PasswordChange_DoesNotAffectOtherUser(t *testing.T) {

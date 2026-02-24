@@ -294,6 +294,127 @@ func TestSmoke_FullRoundTrip_LogoutAll(t *testing.T) {
 	t.Error("__Host-session not found in logout-all response")
 }
 
+// TestSmoke_PasswordReset_UnknownEmail verifies POST /password/reset returns 200
+// even when no account exists for the given email (enumeration-safe).
+func TestSmoke_PasswordReset_UnknownEmail(t *testing.T) {
+	hash, err := auth.HashPassword(smokePassword)
+	if err != nil {
+		t.Fatalf("hashing test password: %v", err)
+	}
+	email := smokeEmail
+	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: hash}
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
+	mailer := &testutil.MockMailer{}
+	h := &auth.AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: mailer}
+	srv := httptest.NewServer(buildRouter(h))
+	defer srv.Close()
+
+	payload := `{"email":"unknown@example.com"}`
+	resp, err := http.Post(srv.URL+"/password/reset", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST /password/reset: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status: expected 200, got %d", resp.StatusCode)
+	}
+}
+
+// TestSmoke_PasswordConfirm_InvalidToken verifies POST /password/confirm returns 400
+// when the token is not found in the store.
+func TestSmoke_PasswordConfirm_InvalidToken(t *testing.T) {
+	hash, err := auth.HashPassword(smokePassword)
+	if err != nil {
+		t.Fatalf("hashing test password: %v", err)
+	}
+	email := smokeEmail
+	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: hash}
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
+	mailer := &testutil.MockMailer{}
+	h := &auth.AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: mailer}
+	srv := httptest.NewServer(buildRouter(h))
+	defer srv.Close()
+
+	payload := `{"token":"notavalidtoken","new_password":"newpassword1"}`
+	resp, err := http.Post(srv.URL+"/password/confirm", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST /password/confirm: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status: expected 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestSmoke_PasswordReset_FullRoundTrip verifies the complete password reset flow over real HTTP:
+// reset request -> confirm with captured token -> old password rejected -> new password accepted.
+func TestSmoke_PasswordReset_FullRoundTrip(t *testing.T) {
+	hash, err := auth.HashPassword(smokePassword)
+	if err != nil {
+		t.Fatalf("hashing test password: %v", err)
+	}
+	email := smokeEmail
+	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: hash}
+	ms := testutil.NewMockStore(user)
+	mc := testutil.NewMockCache()
+	mailer := &testutil.MockMailer{}
+	h := &auth.AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: mailer}
+	srv := httptest.NewServer(buildRouter(h))
+	defer srv.Close()
+
+	// Step 1: Request password reset -- expect 200, mailer captures the token.
+	resetPayload := `{"email":"` + smokeEmail + `"}`
+	resetResp, err := http.Post(srv.URL+"/password/reset", "application/json", strings.NewReader(resetPayload))
+	if err != nil {
+		t.Fatalf("POST /password/reset: %v", err)
+	}
+	resetResp.Body.Close()
+	if resetResp.StatusCode != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d", resetResp.StatusCode)
+	}
+	token := mailer.LastSentToken
+	if token == "" {
+		t.Fatal("mailer.LastSentToken is empty after reset request")
+	}
+
+	// Step 2: Confirm with captured token and new password -- expect 200.
+	confirmPayload := `{"token":"` + token + `","new_password":"newpassword1"}`
+	confirmResp, err := http.Post(srv.URL+"/password/confirm", "application/json", strings.NewReader(confirmPayload))
+	if err != nil {
+		t.Fatalf("POST /password/confirm: %v", err)
+	}
+	confirmResp.Body.Close()
+	if confirmResp.StatusCode != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d", confirmResp.StatusCode)
+	}
+
+	// Step 3: Old password must be rejected -- expect 401.
+	oldPayload := `{"email":"` + smokeEmail + `","password":"` + smokePassword + `"}`
+	oldResp, err := http.Post(srv.URL+"/login/email", "application/json", strings.NewReader(oldPayload))
+	if err != nil {
+		t.Fatalf("POST /login/email (old password): %v", err)
+	}
+	oldResp.Body.Close()
+	if oldResp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("old password: expected 401, got %d", oldResp.StatusCode)
+	}
+
+	// Step 4: New password must be accepted -- expect 200.
+	newPayload := `{"email":"` + smokeEmail + `","password":"newpassword1"}`
+	newResp, err := http.Post(srv.URL+"/login/email", "application/json", strings.NewReader(newPayload))
+	if err != nil {
+		t.Fatalf("POST /login/email (new password): %v", err)
+	}
+	newResp.Body.Close()
+	if newResp.StatusCode != http.StatusOK {
+		t.Errorf("new password: expected 200, got %d", newResp.StatusCode)
+	}
+}
+
 // TestSmoke_FullRoundTrip verifies login -> logout over real HTTP.
 // Exercises cookie passing, CSRF header, and middleware ordering end-to-end.
 func TestSmoke_FullRoundTrip(t *testing.T) {
