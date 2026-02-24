@@ -457,11 +457,6 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 
 	email := strings.ToLower(pwdResetInput.Email)
 
-	if msg := ValidateEmail(email); msg != "" {
-		BadRequest(w, r, msg)
-		return
-	}
-
 	// Check if email rate-limited, if so, err != nil, return
 	err := h.RL.Allow(r.Context(), fmt.Sprintf("reset:email:%s", email), PasswordResetPolicy)
 	if err != nil {
@@ -471,6 +466,12 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		InternalServerError(w, r, err)
+		return
+	}
+
+	// validate email
+	if msg := ValidateEmail(email); msg != "" {
+		BadRequest(w, r, msg)
 		return
 	}
 
