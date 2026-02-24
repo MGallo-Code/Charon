@@ -5,6 +5,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -252,6 +253,27 @@ func (s *PostgresStore) SetEmailConfirmedAt(ctx context.Context, userID uuid.UUI
 		return fmt.Errorf("updating email_confirmed_at: %w", err)
 	}
 	return nil
+}
+
+// ConsumeToken atomically marks a valid token as used and returns the associated user_id in one query.
+func (s *PostgresStore) ConsumeToken(ctx context.Context, tokenType string, tokenHash []byte) (uuid.UUID, error) {
+	var userID uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		UPDATE tokens
+		SET used_at = NOW()
+		WHERE token_hash = $1
+			AND token_type = $2
+			AND used_at IS NULL
+			AND expires_at > NOW()
+		RETURNING user_id
+	`, tokenHash, tokenType).Scan(&userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.UUID{}, fmt.Errorf("consuming token: %w", pgx.ErrNoRows)
+		}
+		return uuid.UUID{}, fmt.Errorf("consuming token: %w", err)
+	}
+	return userID, nil
 }
 
 // CleanupExpiredSessions deletes sessions expired before retention cutoff.
