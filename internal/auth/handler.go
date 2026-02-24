@@ -154,6 +154,10 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 			// Duplicate email -- return same 201 as real registration (no enumeration).
 			// userID was generated above but never persisted; caller can't distinguish.
 			logInfo(r, "registration attempted with existing email")
+			meta, _ := json.Marshal(struct {
+				Email string `json:"email"`
+			}{registerInput.Email})
+			h.auditLog(r, nil, "user.register_failed", meta)
 		} else {
 			logError(r, "failed to create user", "error", err)
 			InternalServerError(w, r, err)
@@ -161,6 +165,7 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		logInfo(r, "user registered", "user_id", userID)
+		h.auditLog(r, &userID, "user.registered", nil)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -216,6 +221,10 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		_, _ = VerifyPassword(loginInput.Password, dummyPasswordHash())
 		if errors.Is(err, pgx.ErrNoRows) {
 			logInfo(r, "login attempted with non-existent email")
+			meta, _ := json.Marshal(struct {
+				Email string `json:"email"`
+			}{email})
+			h.auditLog(r, nil, "user.login_failed", meta)
 			Unauthorized(w, r, "invalid credentials")
 		} else {
 			logError(r, "failed to fetch user for login", "error", err)
@@ -232,6 +241,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	if !valid {
 		logInfo(r, "login attempted with incorrect password", "user_id", user.ID)
+		h.auditLog(r, &user.ID, "user.login_failed", nil)
 		Unauthorized(w, r, "invalid credentials")
 		return
 	}
@@ -288,6 +298,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	SetSessionCookie(w, *token, expiresAt)
+	h.auditLog(r, &user.ID, "user.login", nil)
 	logInfo(r, "user logged in successfully", "user_id", user.ID, "remember_me", loginInput.RememberMe)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -319,6 +330,7 @@ func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ClearSessionCookie(w)
+	h.auditLog(r, &userID, "user.logout_all", nil)
 	logInfo(r, "user logged out of all devices", "user_id", userID)
 	OK(w, "logged out of all devices")
 }
@@ -352,6 +364,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ClearSessionCookie(w)
+	h.auditLog(r, &userID, "user.logout", nil)
 	logInfo(r, "user logged out", "user_id", userID)
 	OK(w, "logged out")
 }
@@ -420,6 +433,7 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if !pwdMatch {
 		logWarn(r, "password change failed: wrong current password", "user_id", id)
+		h.auditLog(r, &id, "user.password_change_failed", nil)
 		Unauthorized(w, r, "invalid credentials")
 		return
 	}
@@ -453,6 +467,7 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 
 	// Clear the session cookie; current session is now invalid.
 	ClearSessionCookie(w)
+	h.auditLog(r, &id, "user.password_changed", nil)
 	logInfo(r, "user changed password", "user_id", id)
 	OK(w, "password updated")
 }
@@ -530,6 +545,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.auditLog(r, &user.ID, "user.password_reset_requested", nil)
 	logInfo(r, "password reset email sent", "user_id", user.ID)
 	OK(w, resetMsg)
 }
@@ -566,6 +582,7 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			logWarn(r, "password reset failed: invalid or expired token")
+			h.auditLog(r, nil, "user.password_reset_failed", nil)
 			BadRequest(w, r, "invalid or expired reset token")
 			return
 		}
@@ -608,6 +625,7 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 
 	// No ClearSessionCookie -- reset flow is unauthenticated; caller has no session cookie.
 	// Sessions already purged above. Any stale cookie from a prior login will 401 on next use.
+	h.auditLog(r, &userID, "user.password_reset_completed", nil)
 	logInfo(r, "user reset password", "user_id", userID)
 	OK(w, "password updated")
 }
