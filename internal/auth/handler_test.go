@@ -258,23 +258,21 @@ func TestRegisterByEmail(t *testing.T) {
 
 	// -- Database errors (500) --
 
-	t.Run("duplicate email returns InternalServerError", func(t *testing.T) {
-		// Mock store that returns duplicate key error (Postgres 23505)
+	t.Run("duplicate email returns Created (no enumeration)", func(t *testing.T) {
+		// Duplicate key error (23505) must return the same 201 as a real registration.
+		// Returning 500 would let an attacker distinguish taken vs. available emails.
 		pgErr := &pgconn.PgError{Code: "23505"}
 		h := AuthHandler{
 			PS: &testutil.MockStore{CreateUserErr: fmt.Errorf("creating user by email: %w", pgErr)},
 		}
 
-		// Body w// valid email and password
 		body := strings.NewReader(`{"email":"existing@email.com","password":"validpassword123"}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
 		w := httptest.NewRecorder()
 
-		// Attempt register
 		h.RegisterByEmail(w, r)
 
-		// assert internal server error (no user enumeration)
-		assertInternalServerError(t, w)
+		assertCreated(t, w)
 	})
 
 	t.Run("generic database error returns InternalServerError", func(t *testing.T) {

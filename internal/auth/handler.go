@@ -159,14 +159,14 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			// Duplicate email — expected behavior, not a server fault.
+			// Duplicate email -- return same 201 as real registration (no enumeration).
+			// userID was generated above but never persisted; caller can't distinguish.
 			logInfo(r, "registration attempted with existing email")
 		} else {
 			logError(r, "failed to create user", "error", err)
+			InternalServerError(w, r, err)
+			return
 		}
-		// Generic response — don't reveal whether email exists.
-		InternalServerError(w, r, err)
-		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -360,8 +360,9 @@ var LoginEmailPolicy = store.RateLimit{
 	LockoutTTL:  15 * time.Minute,
 }
 
-// PasswordResetPolicy is the rate limit applied per user on password reset requests.
-// Applied in PasswordReset after user lookup, keyed on "reset:user:<userID>".
+// PasswordResetPolicy is the rate limit applied per email address on password reset requests.
+// Keyed on "reset:email:<email>" before user lookup -- intentionally pre-lookup to prevent
+// timing-based enumeration (post-lookup keying would reveal whether an email exists).
 var PasswordResetPolicy = store.RateLimit{
 	MaxAttempts: 3,
 	Window:      1 * time.Hour,
