@@ -537,7 +537,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 
 // PasswordConfirm handles POST /auth/password/confirm -- completes the reset using the token from the email link.
 func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
-	// Decode request body, expect current_password and new_password
+	// Decode request body, expect token and new_password
 	var pwdConfirmInput struct {
 		Token       string `json:"token"`
 		NewPassword string `json:"new_password"`
