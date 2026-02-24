@@ -128,16 +128,16 @@ func TestVerifyPassword(t *testing.T) {
 
 func TestValidatePassword(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantMsg  string
+		name    string
+		input   string
+		wantMsg string
 	}{
 		{"empty string", "", "No password provided!"},
-		{"one under minimum", "short", "Password too short!"},
-		{"exactly minimum", "sixchr", ""},
+		{"one under minimum", "seven77", "Password too short!"},
+		{"exactly minimum", "eightchr", ""},
 		{"exactly maximum", strings.Repeat("a", 128), ""},
 		{"one over maximum", strings.Repeat("a", 129), "Password too long!"},
-		{"valid password", "correcthorsebatterystaple", ""},
+		{"valid password", "correcthorsebatterystaple*", ""},
 	}
 
 	for _, tc := range tests {

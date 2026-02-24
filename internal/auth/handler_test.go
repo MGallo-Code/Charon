@@ -1114,7 +1114,7 @@ func pwdConfirmReq(token, newPwd string) *http.Request {
 }
 
 func TestPasswordConfirm(t *testing.T) {
-	validPassword := "newpwd1"
+	validPassword := "newpwd12*"
 	testEmail := "confirm@example.com"
 	testUserID := uuid.Must(uuid.NewV7())
 	testUser := &store.User{
