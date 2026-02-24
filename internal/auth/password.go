@@ -59,9 +59,18 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 		return false, fmt.Errorf("invalid hash format")
 	}
 
-	// Check to make sure using correct algorithm
+	// Check algorithm
 	if parts[1] != "argon2id" {
-		return false, fmt.Errorf("unsupported algorithm: %s", parts[1])
+		return false, fmt.Errorf("unsupported algorithm")
+	}
+
+	// Check version
+	var version int
+	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil {
+		return false, fmt.Errorf("parsing hash version: %w", err)
+	}
+	if version != argon2.Version {
+		return false, fmt.Errorf("unsupported argon2 version: %d", version)
 	}
 
 	// init vars, scan string and pull values out from string
