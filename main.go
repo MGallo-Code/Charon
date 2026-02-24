@@ -15,6 +15,7 @@ import (
 
 	"github.com/MGallo-Code/charon/internal/auth"
 	"github.com/MGallo-Code/charon/internal/config"
+	"github.com/MGallo-Code/charon/internal/mail"
 	"github.com/MGallo-Code/charon/internal/store"
 
 	"github.com/go-chi/chi/v5"
@@ -87,8 +88,11 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string) error {
 	rs := store.NewRedisStore(rdb)
 	rl := store.NewRedisRateLimiter(rdb)
 
+	// Use NopMailer until SMTP is configured via env vars.
+	var ml mail.Mailer = &mail.NopMailer{}
+
 	// Create AuthHandler
-	h := auth.AuthHandler{PS: ps, RS: rs, RL: rl}
+	h := auth.AuthHandler{PS: ps, RS: rs, RL: rl, ML: ml}
 
 	// Bind listener; ":0" picks a free port (useful in tests).
 	ln, err := net.Listen("tcp", ":"+cfg.Port)
@@ -177,6 +181,7 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	})
 	r.Post("/register/email", h.RegisterByEmail)
 	r.Post("/login/email", h.LoginByEmail)
+	r.Post("/password/reset", h.PasswordReset)
 	r.Post("/password/confirm", h.PasswordConfirm)
 
 	// Authentication required routes
