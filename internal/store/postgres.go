@@ -256,7 +256,7 @@ func (s *PostgresStore) SetEmailConfirmedAt(ctx context.Context, userID uuid.UUI
 }
 
 // ConsumeToken atomically marks a valid token as used and returns the associated user_id in one query.
-func (s *PostgresStore) ConsumeToken(ctx context.Context, tokenType string, tokenHash []byte) (uuid.UUID, error) {
+func (s *PostgresStore) ConsumeToken(ctx context.Context, tokenHash []byte, tokenType string) (uuid.UUID, error) {
 	var userID uuid.UUID
 	err := s.pool.QueryRow(ctx, `
 		UPDATE tokens
@@ -275,6 +275,13 @@ func (s *PostgresStore) ConsumeToken(ctx context.Context, tokenType string, toke
 	}
 	return userID, nil
 }
+
+// WriteAuditLog inserts a single audit event row into auth_audit_log.
+
+// Accepts an AuditEntry value (struct defined alongside this method).
+// Non-blocking by design: caller logs the error but never fails the request on audit write failure.
+// user_id is nullable -- pass nil for pre-auth failures (e.g. login with unknown email).
+// metadata is a raw JSON blob; callers marshal their own context (session_id, token_type, etc.).
 
 // CleanupExpiredSessions deletes sessions expired before retention cutoff.
 // Pass a grace window (e.g. 7*24*time.Hour) to retain sessions for audit before deletion.
