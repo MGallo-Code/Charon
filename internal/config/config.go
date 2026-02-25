@@ -20,6 +20,15 @@ type Config struct {
 	CookieDomain string
 	LogLevel     slog.Level
 
+	// SMTP configuration for outbound email. All optional -- empty Host disables sending.
+	SMTPHost          string
+	SMTPPort          string // defaults to 587
+	SMTPUsername      string
+	SMTPPassword      string
+	SMTPFromAddress   string
+	SMTPResetURLBase  string
+	SMTPVerifyURLBase string
+
 	// Rate limit policy for login attempts per email.
 	// Defaults: max=10, window=10m, lockout=15m.
 	RateLoginEmailMax     int
@@ -71,6 +80,18 @@ func LoadConfig() (*Config, error) {
 	default:
 		cfg.LogLevel = slog.LevelInfo
 	}
+
+	// SMTP -- all optional; empty Host means no email sending (NopMailer).
+	cfg.SMTPHost = os.Getenv("SMTP_HOST")
+	cfg.SMTPPort = os.Getenv("SMTP_PORT")
+	if cfg.SMTPPort == "" {
+		cfg.SMTPPort = "587"
+	}
+	cfg.SMTPUsername = os.Getenv("SMTP_USERNAME")
+	cfg.SMTPPassword = os.Getenv("SMTP_PASSWORD")
+	cfg.SMTPFromAddress = os.Getenv("SMTP_FROM")
+	cfg.SMTPResetURLBase = os.Getenv("SMTP_RESET_URL")
+	cfg.SMTPVerifyURLBase = os.Getenv("SMTP_VERIFY_URL")
 
 	// Rate limit: login by email. All three fields required -- if any are missing or invalid,
 	// fall back to the default so a misconfigured env doesn't silently disable rate limiting.

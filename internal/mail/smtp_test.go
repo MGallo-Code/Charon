@@ -25,10 +25,15 @@ func smtpTestMailer(t *testing.T) (*SMTPMailer, string) {
 		t.Skip("smtp integration test: set SMTP_* env vars and TEST_SMTP_TO to run")
 	}
 
-	mailer := NewSMTPMailer(host, port, username, password, from,
-		"https://example.com/reset-password",
-		"https://example.com/verify-email",
-	)
+	mailer := NewSMTPMailer(SMTPConfig{
+		Host:          host,
+		Port:          port,
+		Username:      username,
+		Password:      password,
+		FromAddress:   from,
+		ResetURLBase:  "https://example.com/reset-password",
+		VerifyURLBase: "https://example.com/verify-email",
+	})
 	return mailer, to
 }
 

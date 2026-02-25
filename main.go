@@ -49,8 +49,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Build mailer from config; fall back to NopMailer if SMTP_HOST is unset.
+	var ml mail.Mailer = &mail.NopMailer{}
+	if cfg.SMTPHost != "" {
+		ml = mail.NewSMTPMailer(mail.SMTPConfig{
+			Host:          cfg.SMTPHost,
+			Port:          cfg.SMTPPort,
+			Username:      cfg.SMTPUsername,
+			Password:      cfg.SMTPPassword,
+			FromAddress:   cfg.SMTPFromAddress,
+			ResetURLBase:  cfg.SMTPResetURLBase,
+			VerifyURLBase: cfg.SMTPVerifyURLBase,
+		})
+	}
+
 	// run() is a separate func so deferred closes (ps, rs) always execute before os.Exit.
-	if err := run(ctx, cfg, nil, nil); err != nil {
+	if err := run(ctx, cfg, nil, ml); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
@@ -88,11 +102,6 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 
 	rs := store.NewRedisStore(rdb)
 	rl := store.NewRedisRateLimiter(rdb)
-
-	// Use NopMailer if no mailer was injected (production path).
-	if ml == nil {
-		ml = &mail.NopMailer{}
-	}
 
 	// Create AuthHandler
 	h := auth.AuthHandler{
