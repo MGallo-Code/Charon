@@ -561,8 +561,17 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build vars from available user fields; omit nil pointers.
+	vars := map[string]string{}
+	if user.FirstName != nil {
+		vars["firstName"] = *user.FirstName
+	}
+	if user.LastName != nil {
+		vars["lastName"] = *user.LastName
+	}
+
 	// Send pwd reset
-	err = h.ML.SendPasswordReset(r.Context(), *user.Email, base64.RawURLEncoding.EncodeToString(token[:]), user.FirstName, user.LastName)
+	err = h.ML.SendPasswordReset(r.Context(), *user.Email, base64.RawURLEncoding.EncodeToString(token[:]), 1*time.Hour, vars)
 	if err != nil {
 		logError(r, "failed to send password reset email", "error", err, "user_id", user.ID)
 		OK(w, resetMsg)

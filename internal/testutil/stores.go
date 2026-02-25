@@ -339,30 +339,30 @@ type MockMailer struct {
 	SendEmailVerificationErr error
 
 	// Password reset captures
-	LastResetTo        string
-	LastResetToken     string
-	LastResetFirstName *string
-	LastResetLastName  *string
+	LastResetTo       string
+	LastResetToken    string
+	LastResetExpiry   time.Duration
+	LastResetVars     map[string]string
 
 	// Email verification captures
-	LastVerifTo        string
-	LastVerifToken     string
-	LastVerifFirstName *string
-	LastVerifLastName  *string
+	LastVerifTo     string
+	LastVerifToken  string
+	LastVerifExpiry time.Duration
+	LastVerifVars   map[string]string
 }
 
-func (m *MockMailer) SendPasswordReset(_ context.Context, toEmail, token string, firstName, lastName *string) error {
+func (m *MockMailer) SendPasswordReset(_ context.Context, toEmail, token string, expiresIn time.Duration, vars map[string]string) error {
 	m.LastResetTo = toEmail
 	m.LastResetToken = token
-	m.LastResetFirstName = firstName
-	m.LastResetLastName = lastName
+	m.LastResetExpiry = expiresIn
+	m.LastResetVars = vars
 	return m.SendPasswordResetErr
 }
 
-func (m *MockMailer) SendEmailVerification(_ context.Context, toEmail, token string, firstName, lastName *string) error {
+func (m *MockMailer) SendEmailVerification(_ context.Context, toEmail, token string, expiresIn time.Duration, vars map[string]string) error {
 	m.LastVerifTo = toEmail
 	m.LastVerifToken = token
-	m.LastVerifFirstName = firstName
-	m.LastVerifLastName = lastName
+	m.LastVerifExpiry = expiresIn
+	m.LastVerifVars = vars
 	return m.SendEmailVerificationErr
 }

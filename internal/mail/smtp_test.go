@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 )
 
 // smtpTestMailer returns a configured SMTPMailer and recipient, or skips if env vars are missing.
@@ -40,9 +41,7 @@ func smtpTestMailer(t *testing.T) (*SMTPMailer, string) {
 func TestSMTPMailer_SendPasswordReset(t *testing.T) {
 	mailer, to := smtpTestMailer(t)
 
-	firstName := "firstname"
-	lastName := "lastname"
-	if err := mailer.SendPasswordReset(context.Background(), to, "test-token-abc123", &firstName, &lastName); err != nil {
+	if err := mailer.SendPasswordReset(context.Background(), to, "test-token-abc123", time.Hour, map[string]string{"firstName": "firstname", "lastName": "lastname"}); err != nil {
 		t.Fatalf("SendPasswordReset: %v", err)
 	}
 }
@@ -50,9 +49,7 @@ func TestSMTPMailer_SendPasswordReset(t *testing.T) {
 func TestSMTPMailer_SendEmailVerification(t *testing.T) {
 	mailer, to := smtpTestMailer(t)
 
-	firstName := "firstname"
-	lastName := "lastname"
-	if err := mailer.SendEmailVerification(context.Background(), to, "test-verify-token-abc123", &firstName, &lastName); err != nil {
+	if err := mailer.SendEmailVerification(context.Background(), to, "test-verify-token-abc123", 24*time.Hour, map[string]string{"firstName": "firstname", "lastName": "lastname"}); err != nil {
 		t.Fatalf("SendEmailVerification: %v", err)
 	}
 }
