@@ -44,6 +44,10 @@ type Config struct {
 	// RequireEmailVerification gates login on email_confirmed_at being set.
 	// Default true; set REQUIRE_EMAIL_VERIFICATION=false to disable.
 	RequireEmailVerification bool
+
+	// Session TTLs. Defaults: 24h standard, 720h (30d) remember-me.
+	SessionTTL         time.Duration
+	SessionRememberMe  time.Duration
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
@@ -121,6 +125,9 @@ func LoadConfig() (*Config, error) {
 
 	// Default true -- only explicit "false" disables.
 	cfg.RequireEmailVerification = os.Getenv("REQUIRE_EMAIL_VERIFICATION") != "false"
+
+	cfg.SessionTTL = envDuration("SESSION_TTL", 24*time.Hour)
+	cfg.SessionRememberMe = envDuration("SESSION_REMEMBER_ME_TTL", 720*time.Hour)
 
 	return cfg, nil
 }

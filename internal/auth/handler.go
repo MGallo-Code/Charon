@@ -126,6 +126,10 @@ type AuthHandler struct {
 	// RequireEmailVerification blocks login until email_confirmed_at is set.
 	// Controlled by REQUIRE_EMAIL_VERIFICATION env var (default true).
 	RequireEmailVerification bool
+
+	// Session durations. Populated from config at startup.
+	SessionTTL        time.Duration
+	SessionRememberMe time.Duration
 }
 
 // CheckHealth handles GET /health — pings Postgres and Redis, returns per-dependency status.
@@ -322,16 +326,12 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 24h default, 30d if remember_me.
-	var expiresAt time.Time
-	var ttl int
+	sessionDur := h.SessionTTL
 	if loginInput.RememberMe {
-		ttl = 30 * 24 * 60 * 60
-		expiresAt = time.Now().Add(30 * 24 * time.Hour)
-	} else {
-		ttl = 24 * 60 * 60
-		expiresAt = time.Now().Add(24 * time.Hour)
+		sessionDur = h.SessionRememberMe
 	}
+	expiresAt := time.Now().Add(sessionDur)
+	ttl := int(sessionDur.Seconds())
 
 	ipAddr := r.RemoteAddr
 	userAgent := r.UserAgent()

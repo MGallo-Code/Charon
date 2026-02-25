@@ -119,6 +119,8 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		RL:                       rl,
 		ML:                       ml,
 		RequireEmailVerification: cfg.RequireEmailVerification,
+		SessionTTL:               cfg.SessionTTL,
+		SessionRememberMe:        cfg.SessionRememberMe,
 		Policies: auth.RateLimitPolicies{
 			LoginEmail: store.RateLimit{
 				MaxAttempts: cfg.RateLoginEmailMax,

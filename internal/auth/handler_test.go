@@ -519,9 +519,11 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("valid credentials with remember_me sets extended TTL", func(t *testing.T) {
 		h := AuthHandler{
-			PS: testutil.NewMockStore(testUser),
-			RS: testutil.NewMockCache(),
-			RL: &testutil.MockRateLimiter{},
+			PS:                testutil.NewMockStore(testUser),
+			RS:                testutil.NewMockCache(),
+			RL:                &testutil.MockRateLimiter{},
+			SessionTTL:        24 * time.Hour,
+			SessionRememberMe: 720 * time.Hour,
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123","remember_me":true}`)
@@ -550,9 +552,11 @@ func TestLoginByEmail(t *testing.T) {
 
 	t.Run("valid credentials without remember_me sets default TTL", func(t *testing.T) {
 		h := AuthHandler{
-			PS: testutil.NewMockStore(testUser),
-			RS: testutil.NewMockCache(),
-			RL: &testutil.MockRateLimiter{},
+			PS:                testutil.NewMockStore(testUser),
+			RS:                testutil.NewMockCache(),
+			RL:                &testutil.MockRateLimiter{},
+			SessionTTL:        24 * time.Hour,
+			SessionRememberMe: 720 * time.Hour,
 		}
 
 		body := strings.NewReader(`{"email":"test@example.com","password":"password123"}`)
