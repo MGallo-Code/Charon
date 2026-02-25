@@ -750,14 +750,14 @@ func TestPasswordChange(t *testing.T) {
 	})
 
 	t.Run("invalid new_password returns BadRequest", func(t *testing.T) {
-		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache(), Policy: PasswordPolicy{MinLength: 8, MaxLength: 128}}
 
 		r := pwdChangeReq(testUser.ID, testPassword, "short")
 		w := httptest.NewRecorder()
 
 		h.PasswordChange(w, r)
 
-		assertBadRequest(t, w, "Password too short!")
+		assertBadRequest(t, w, "password must be at least 8 characters")
 	})
 
 	// -- Missing context (500) --
@@ -1160,7 +1160,7 @@ func TestPasswordConfirm(t *testing.T) {
 	})
 
 	t.Run("empty new_password returns BadRequest", func(t *testing.T) {
-		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache(), Policy: PasswordPolicy{MinLength: 8, MaxLength: 128}}
 
 		// Password validation runs before token decode -- token field irrelevant here.
 		r := pwdConfirmReq("sometoken", "")
@@ -1168,29 +1168,29 @@ func TestPasswordConfirm(t *testing.T) {
 
 		h.PasswordConfirm(w, r)
 
-		assertBadRequest(t, w, "No password provided!")
+		assertBadRequest(t, w, "password must be at least 8 characters")
 	})
 
 	t.Run("password too short returns BadRequest", func(t *testing.T) {
-		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache(), Policy: PasswordPolicy{MinLength: 8, MaxLength: 128}}
 
 		r := pwdConfirmReq("sometoken", "abc")
 		w := httptest.NewRecorder()
 
 		h.PasswordConfirm(w, r)
 
-		assertBadRequest(t, w, "Password too short!")
+		assertBadRequest(t, w, "password must be at least 8 characters")
 	})
 
 	t.Run("password too long returns BadRequest", func(t *testing.T) {
-		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache(), Policy: PasswordPolicy{MinLength: 8, MaxLength: 128}}
 
 		r := pwdConfirmReq("sometoken", strings.Repeat("a", 129))
 		w := httptest.NewRecorder()
 
 		h.PasswordConfirm(w, r)
 
-		assertBadRequest(t, w, "Password too long!")
+		assertBadRequest(t, w, "password must be at most 128 characters")
 	})
 
 	t.Run("malformed base64 token returns BadRequest", func(t *testing.T) {
@@ -1596,4 +1596,100 @@ func TestResendVerificationEmail(t *testing.T) {
 			t.Errorf("expected normalised email %q, got %q", email, mailer.LastVerifTo)
 		}
 	})
+}
+
+// --- PasswordPolicy handler integration ---
+
+// assertPolicyViolation checks response is 400 and body contains the failure message.
+// Uses substring match because handlers join multiple failures with "; " and we test
+// one violation at a time -- the exact joined string is an implementation detail.
+func assertPolicyViolation(t *testing.T, w *httptest.ResponseRecorder, wantFragment string) {
+	t.Helper()
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: expected 400, got %d", w.Code)
+	}
+	bodyBytes, _ := io.ReadAll(w.Body)
+	body := string(bodyBytes)
+	if !strings.Contains(body, wantFragment) {
+		t.Errorf("body: expected to contain %q, got %q", wantFragment, body)
+	}
+}
+
+// TestRegisterByEmail_PolicyViolation verifies that RegisterByEmail rejects a
+// password that violates h.Policy and returns 400 with the failure message.
+func TestRegisterByEmail_PolicyViolation(t *testing.T) {
+	// Policy requires at least one digit; submitted password has none.
+	h := AuthHandler{
+		PS: &testutil.MockStore{},
+		Policy: PasswordPolicy{
+			MinLength:    8,
+			RequireDigit: true,
+		},
+	}
+
+	body := strings.NewReader(`{"email":"valid@example.com","password":"nodigitshere"}`)
+	r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
+	w := httptest.NewRecorder()
+
+	h.RegisterByEmail(w, r)
+
+	assertPolicyViolation(t, w, "password must contain at least one digit")
+}
+
+// TestPasswordChange_PolicyViolation verifies that PasswordChange rejects a
+// new_password that violates h.Policy and returns 400 with the failure message.
+func TestPasswordChange_PolicyViolation(t *testing.T) {
+	currentPwd := "OldPassword1!"
+	currentHash, _ := HashPassword(currentPwd)
+	testEmail := "pwchange-policy@example.com"
+	testUser := &store.User{
+		ID:           uuid.Must(uuid.NewV7()),
+		Email:        &testEmail,
+		PasswordHash: currentHash,
+	}
+
+	// Policy requires uppercase; new password is all lowercase.
+	h := AuthHandler{
+		PS: testutil.NewMockStore(testUser),
+		RS: testutil.NewMockCache(),
+		Policy: PasswordPolicy{
+			MinLength:        8,
+			RequireUppercase: true,
+		},
+	}
+
+	r := pwdChangeReq(testUser.ID, currentPwd, "alllowercase")
+	w := httptest.NewRecorder()
+
+	h.PasswordChange(w, r)
+
+	assertPolicyViolation(t, w, "password must contain at least one uppercase letter")
+}
+
+// TestPasswordConfirm_PolicyViolation verifies that PasswordConfirm rejects a
+// new_password that violates h.Policy and returns 400 with the failure message.
+func TestPasswordConfirm_PolicyViolation(t *testing.T) {
+	testEmail := "confirm-policy@example.com"
+	testUserID := uuid.Must(uuid.NewV7())
+	testUser := &store.User{ID: testUserID, Email: &testEmail}
+
+	ms := testutil.NewMockStore(testUser)
+	tok := seedConfirmToken(ms, testUserID)
+
+	// Policy requires a special character; submitted password has none.
+	h := AuthHandler{
+		PS: ms,
+		RS: testutil.NewMockCache(),
+		Policy: PasswordPolicy{
+			MinLength:      8,
+			RequireSpecial: true,
+		},
+	}
+
+	r := pwdConfirmReq(tok, "NoSpecialChars1A")
+	w := httptest.NewRecorder()
+
+	h.PasswordConfirm(w, r)
+
+	assertPolicyViolation(t, w, "password must contain at least one special character")
 }

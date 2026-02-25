@@ -131,6 +131,9 @@ type AuthHandler struct {
 	// Session durations. Populated from config at startup.
 	SessionTTL        time.Duration
 	SessionRememberMe time.Duration
+
+	// Policy defines password complexity rules for registration and password changes.
+	Policy PasswordPolicy
 }
 
 // CheckHealth handles GET /health — pings Postgres and Redis, returns per-dependency status.
@@ -180,8 +183,8 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if invalidMsg := ValidatePassword(registerInput.Password); invalidMsg != "" {
-		BadRequest(w, r, invalidMsg)
+	if failures := h.Policy.Validate(registerInput.Password); len(failures) > 0 {
+		BadRequest(w, r, strings.Join(failures, "; "))
 		return
 	}
 
@@ -460,8 +463,8 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate new pwd
-	if invalidMsg := ValidatePassword(pwdChangeInput.NewPassword); invalidMsg != "" {
-		BadRequest(w, r, invalidMsg)
+	if failures := h.Policy.Validate(pwdChangeInput.NewPassword); len(failures) > 0 {
+		BadRequest(w, r, strings.Join(failures, "; "))
 		return
 	}
 
@@ -626,8 +629,8 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate new pwd
-	if invalidMsg := ValidatePassword(pwdConfirmInput.NewPassword); invalidMsg != "" {
-		BadRequest(w, r, invalidMsg)
+	if failures := h.Policy.Validate(pwdConfirmInput.NewPassword); len(failures) > 0 {
+		BadRequest(w, r, strings.Join(failures, "; "))
 		return
 	}
 

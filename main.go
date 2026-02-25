@@ -138,6 +138,13 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 				LockoutTTL:  cfg.RateResendLockout,
 			},
 		},
+		Policy: auth.PasswordPolicy{
+			MinLength:        cfg.PasswordMinLength,
+			MaxLength:        cfg.PasswordMaxLength,
+			RequireUppercase: cfg.PasswordRequireUppercase,
+			RequireDigit:     cfg.PasswordRequireDigit,
+			RequireSpecial:   cfg.PasswordRequireSpecial,
+		},
 	}
 
 	// Bind listener; ":0" picks a free port (useful in tests).

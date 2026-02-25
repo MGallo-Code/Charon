@@ -10,6 +10,7 @@ import (
 	"fmt"
 	netmail "net/mail"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
@@ -117,6 +118,66 @@ func ValidateEmail(email string) string {
 		return "Invalid email format"
 	}
 	return ""
+}
+
+// PasswordPolicy defines password complexity rules applied at registration and password change.
+//
+//	MinLength is the minimum rune count (user-perceived chars); 0 skips minimum enforcement.
+//	MaxLength is the maximum rune count (user-perceived chars); 0 skips maximum enforcement.
+//	RequireUppercase, RequireDigit, and RequireSpecial each gate a character-class check;
+//	false means skip that check entirely. Special characters are defined by the specialChars
+//	constant. No RequireLowercase field -- lowercase is assumed for all passwords. The zero
+//	value is fully permissive: no length limits, no character class checks enforced.
+type PasswordPolicy struct {
+	MinLength        int
+	MaxLength        int
+	RequireUppercase bool
+	RequireDigit     bool
+	RequireSpecial   bool
+}
+
+// specialChars defines which characters satisfy the RequireSpecial rule.
+// All printable non-alphanumeric ASCII punctuation and symbols.
+const specialChars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+
+// Validate checks password against every enabled rule and returns a slice of human-readable
+// failure messages; an empty slice means the password is valid.
+func (p PasswordPolicy) Validate(password string) []string {
+	var failures []string
+
+	if p.MinLength > 0 && utf8.RuneCountInString(password) < p.MinLength {
+		failures = append(failures, fmt.Sprintf("password must be at least %d characters", p.MinLength))
+	}
+	if p.MaxLength > 0 && utf8.RuneCountInString(password) > p.MaxLength {
+		failures = append(failures, fmt.Sprintf("password must be at most %d characters", p.MaxLength))
+	}
+
+	var seenUpper, seenDigit, seenSpecial bool
+	for _, r := range password {
+		if unicode.IsControl(r) {
+			return []string{"password contains invalid characters"}
+		}
+		switch {
+		case unicode.IsUpper(r):
+			seenUpper = true
+		case unicode.IsDigit(r):
+			seenDigit = true
+		case strings.ContainsRune(specialChars, r):
+			seenSpecial = true
+		}
+	}
+
+	if p.RequireUppercase && !seenUpper {
+		failures = append(failures, "password must contain at least one uppercase letter")
+	}
+	if p.RequireDigit && !seenDigit {
+		failures = append(failures, "password must contain at least one digit")
+	}
+	if p.RequireSpecial && !seenSpecial {
+		failures = append(failures, "password must contain at least one special character")
+	}
+
+	return failures
 }
 
 // ValidatePassword checks length constraints; returns error message or empty string.

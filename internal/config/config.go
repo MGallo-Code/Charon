@@ -54,6 +54,14 @@ type Config struct {
 	// Session TTLs. Defaults: 24h standard, 720h (30d) remember-me.
 	SessionTTL         time.Duration
 	SessionRememberMe  time.Duration
+
+	// Password complexity policy. All optional -- zero values are permissive.
+	// Passed to auth.PasswordPolicy in main.go.
+	PasswordMinLength        int
+	PasswordMaxLength        int
+	PasswordRequireUppercase bool
+	PasswordRequireDigit     bool
+	PasswordRequireSpecial   bool
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
@@ -140,6 +148,13 @@ func LoadConfig() (*Config, error) {
 	cfg.SessionTTL = envDuration("SESSION_TTL", 24*time.Hour)
 	cfg.SessionRememberMe = envDuration("SESSION_REMEMBER_ME_TTL", 720*time.Hour)
 
+	// Password complexity policy -- optional, all default to permissive values.
+	cfg.PasswordMinLength = envInt("PASSWORD_MIN_LENGTH", 8)
+	cfg.PasswordMaxLength = envInt("PASSWORD_MAX_LENGTH", 128)
+	cfg.PasswordRequireUppercase = envBool("PASSWORD_REQUIRE_UPPERCASE")
+	cfg.PasswordRequireDigit = envBool("PASSWORD_REQUIRE_DIGIT")
+	cfg.PasswordRequireSpecial = envBool("PASSWORD_REQUIRE_SPECIAL")
+
 	return cfg, nil
 }
 
@@ -155,6 +170,11 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envBool reads an env var as bool; returns true only when the value is exactly "true".
+func envBool(key string) bool {
+	return os.Getenv(key) == "true"
 }
 
 // envDuration reads an env var as time.Duration, returning def if missing or unparseable.
