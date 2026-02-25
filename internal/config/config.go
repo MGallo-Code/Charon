@@ -40,6 +40,10 @@ type Config struct {
 	RateResetMax     int
 	RateResetWindow  time.Duration
 	RateResetLockout time.Duration
+
+	// RequireEmailVerification gates login on email_confirmed_at being set.
+	// Default true; set REQUIRE_EMAIL_VERIFICATION=false to disable.
+	RequireEmailVerification bool
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
@@ -114,6 +118,9 @@ func LoadConfig() (*Config, error) {
 	cfg.RateResetMax = envInt("RATE_RESET_MAX", 3)
 	cfg.RateResetWindow = envDuration("RATE_RESET_WINDOW", 1*time.Hour)
 	cfg.RateResetLockout = envDuration("RATE_RESET_LOCKOUT", 1*time.Hour)
+
+	// Default true -- only explicit "false" disables.
+	cfg.RequireEmailVerification = os.Getenv("REQUIRE_EMAIL_VERIFICATION") != "false"
 
 	return cfg, nil
 }
