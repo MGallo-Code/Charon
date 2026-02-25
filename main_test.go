@@ -59,7 +59,7 @@ func doSmokeLogin(t *testing.T, serverURL string) *http.Response {
 
 // --- Smoke tests ---
 
-// TestSmoke_Health verifies /health is mounted and returns expected JSON.
+// TestSmoke_Health verifies /health is mounted and returns per-dependency status.
 func TestSmoke_Health(t *testing.T) {
 	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
 	defer srv.Close()
@@ -74,13 +74,17 @@ func TestSmoke_Health(t *testing.T) {
 		t.Errorf("status: expected 200, got %d", resp.StatusCode)
 	}
 	var body struct {
-		Status string `json:"status"`
+		Postgres string `json:"postgres"`
+		Redis    string `json:"redis"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decoding response: %v", err)
 	}
-	if body.Status != "ok" {
-		t.Errorf(`body.status: expected "ok", got %q`, body.Status)
+	if body.Postgres != "ok" {
+		t.Errorf(`body.postgres: expected "ok", got %q`, body.Postgres)
+	}
+	if body.Redis != "ok" {
+		t.Errorf(`body.redis: expected "ok", got %q`, body.Redis)
 	}
 }
 

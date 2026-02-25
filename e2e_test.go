@@ -157,7 +157,7 @@ func e2eAuthPost(t *testing.T, path, cookieValue, csrfToken, jsonBody string) *h
 
 // --- E2E tests ---
 
-// TestE2E_Health verifies /health returns {"status":"ok"} against the real server.
+// TestE2E_Health verifies /health returns per-dependency status against the real server.
 func TestE2E_Health(t *testing.T) {
 	skipIfNoE2E(t)
 
@@ -171,13 +171,17 @@ func TestE2E_Health(t *testing.T) {
 		t.Errorf("status: expected 200, got %d", resp.StatusCode)
 	}
 	var body struct {
-		Status string `json:"status"`
+		Postgres string `json:"postgres"`
+		Redis    string `json:"redis"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decoding response: %v", err)
 	}
-	if body.Status != "ok" {
-		t.Errorf(`body.status: expected "ok", got %q`, body.Status)
+	if body.Postgres != "ok" {
+		t.Errorf(`body.postgres: expected "ok", got %q`, body.Postgres)
+	}
+	if body.Redis != "ok" {
+		t.Errorf(`body.redis: expected "ok", got %q`, body.Redis)
 	}
 }
 

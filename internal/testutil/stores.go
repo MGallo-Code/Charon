@@ -23,6 +23,7 @@ import (
 // Use NewMockStore to seed users; or construct directly and set *Err fields for error-path tests.
 type MockStore struct {
 	// Error injection...zero value means no error
+	CheckHealthErr         error
 	CreateUserErr          error
 	GetUserByEmailErr      error
 	GetPwdHashByUserIDErr  error
@@ -225,6 +226,10 @@ func (m *MockStore) WriteAuditLog(_ context.Context, _ store.AuditEntry) error {
 	return m.WriteAuditLogErr
 }
 
+func (m *MockStore) CheckHealth(_ context.Context) error {
+	return m.CheckHealthErr
+}
+
 func (m *MockStore) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) error {
 	if m.DeleteAllSessionsErr != nil {
 		return m.DeleteAllSessionsErr
@@ -244,6 +249,7 @@ func (m *MockStore) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) e
 // Use *Err fields to inject errors for specific operations.
 type MockCache struct {
 	// Error injection...zero value means no error
+	CheckHealthErr       error
 	SetSessionErr        error
 	DeleteSessionErr     error
 	DeleteAllSessionsErr error
@@ -295,6 +301,10 @@ func (m *MockCache) DeleteSession(_ context.Context, tokenHash string, userID uu
 	defer m.mu.Unlock()
 	delete(m.Sessions, tokenHash)
 	return nil
+}
+
+func (m *MockCache) CheckHealth(_ context.Context) error {
+	return m.CheckHealthErr
 }
 
 func (m *MockCache) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) error {
