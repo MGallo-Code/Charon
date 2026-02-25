@@ -210,7 +210,8 @@ func (m *MockStore) ConsumeToken(_ context.Context, tokenHash []byte, tokenType 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.Tokens[string(tokenHash)]
-	if !ok || t.TokenType != tokenType {
+	// Mirrors real query: token must exist, match type, be unused, and not expired.
+	if !ok || t.TokenType != tokenType || t.UsedAt != nil || t.ExpiresAt.Before(time.Now()) {
 		return uuid.UUID{}, fmt.Errorf("consuming token: %w", pgx.ErrNoRows)
 	}
 	now := time.Now()
