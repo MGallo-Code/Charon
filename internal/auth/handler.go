@@ -103,8 +103,9 @@ type RateLimiter interface {
 // RateLimitPolicies holds rate limit policies for all auth endpoints.
 // Configured via RATE_* env vars with defaults set in config.go.
 type RateLimitPolicies struct {
-	LoginEmail    store.RateLimit
-	PasswordReset store.RateLimit
+	LoginEmail         store.RateLimit
+	PasswordReset      store.RateLimit
+	ResendVerification store.RateLimit
 }
 
 // dummyPasswordHash generates a live Argon2id hash at startup for timing attack mitigation.
@@ -707,6 +708,61 @@ func (h *AuthHandler) sendVerificationEmail(r *http.Request, userID uuid.UUID, e
 		return
 	}
 	h.auditLog(r, &userID, "user.email_verification_requested", nil)
+}
+
+// ResendVerificationEmail handles POST /resend/verification-email -- re-sends the verification link.
+// Rate-limited per email. Returns generic 200 regardless of whether the email exists
+// or is already confirmed (no enumeration).
+func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		logWarn(r, "failed to decode resend verification email input", "error", err)
+		BadRequest(w, r, "invalid request")
+		return
+	}
+
+	email := strings.ToLower(input.Email)
+
+	if errMsg := ValidateEmail(email); errMsg != "" {
+		BadRequest(w, r, errMsg)
+		return
+	}
+
+	const resendMsg = "if that email is registered and unverified, a verification link has been sent"
+
+	if err := h.RL.Allow(r.Context(), "resend:email:"+email, h.Policies.ResendVerification); err != nil {
+		if errors.Is(err, store.ErrRateLimitExceeded) {
+			logInfo(r, "resend verification email rate limited", "email", email)
+			TooManyRequests(w)
+			return
+		}
+		InternalServerError(w, r, err)
+		return
+	}
+
+	user, err := h.PS.GetUserByEmail(r.Context(), email)
+	if err != nil {
+		// Generic response for both not-found and DB errors -- no enumeration.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			logWarn(r, "failed to fetch user for resend verification", "error", err)
+		} else {
+			logInfo(r, "resend verification requested for unknown email")
+		}
+		OK(w, resendMsg)
+		return
+	}
+
+	if user.EmailConfirmedAt != nil {
+		logInfo(r, "resend verification requested but email already confirmed", "user_id", user.ID)
+		OK(w, resendMsg)
+		return
+	}
+
+	// sendVerificationEmail handles its own logging and audit.
+	h.sendVerificationEmail(r, user.ID, *user.Email)
+	OK(w, resendMsg)
 }
 
 // VerifyEmail handles POST /verify/email -- consumes a single-use token from

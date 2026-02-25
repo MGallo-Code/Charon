@@ -41,6 +41,12 @@ type Config struct {
 	RateResetWindow  time.Duration
 	RateResetLockout time.Duration
 
+	// Rate limit policy for resend verification email requests per email.
+	// Defaults: max=3, window=1h, lockout=1h.
+	RateResendMax     int
+	RateResendWindow  time.Duration
+	RateResendLockout time.Duration
+
 	// RequireEmailVerification gates login on email_confirmed_at being set.
 	// Default true; set REQUIRE_EMAIL_VERIFICATION=false to disable.
 	RequireEmailVerification bool
@@ -122,6 +128,11 @@ func LoadConfig() (*Config, error) {
 	cfg.RateResetMax = envInt("RATE_RESET_MAX", 3)
 	cfg.RateResetWindow = envDuration("RATE_RESET_WINDOW", 1*time.Hour)
 	cfg.RateResetLockout = envDuration("RATE_RESET_LOCKOUT", 1*time.Hour)
+
+	// Rate limit: resend verification email.
+	cfg.RateResendMax = envInt("RATE_RESEND_MAX", 3)
+	cfg.RateResendWindow = envDuration("RATE_RESEND_WINDOW", 1*time.Hour)
+	cfg.RateResendLockout = envDuration("RATE_RESEND_LOCKOUT", 1*time.Hour)
 
 	// Default true -- only explicit "false" disables.
 	cfg.RequireEmailVerification = os.Getenv("REQUIRE_EMAIL_VERIFICATION") != "false"

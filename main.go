@@ -132,6 +132,11 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 				Window:      cfg.RateResetWindow,
 				LockoutTTL:  cfg.RateResetLockout,
 			},
+			ResendVerification: store.RateLimit{
+				MaxAttempts: cfg.RateResendMax,
+				Window:      cfg.RateResendWindow,
+				LockoutTTL:  cfg.RateResendLockout,
+			},
 		},
 	}
 
@@ -219,6 +224,7 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	r.Post("/register/email", h.RegisterByEmail)
 	r.Post("/login/email", h.LoginByEmail)
 	r.Post("/verify/email", h.VerifyEmail)
+	r.Post("/resend/verification-email", h.ResendVerificationEmail)
 	r.Post("/password/reset", h.PasswordReset)
 	r.Post("/password/confirm", h.PasswordConfirm)
 
