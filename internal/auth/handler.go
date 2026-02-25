@@ -122,6 +122,10 @@ type AuthHandler struct {
 	RL       RateLimiter
 	ML       mail.Mailer
 	Policies RateLimitPolicies
+
+	// RequireEmailVerification blocks login until email_confirmed_at is set.
+	// Controlled by REQUIRE_EMAIL_VERIFICATION env var (default true).
+	RequireEmailVerification bool
 }
 
 // CheckHealth handles GET /health — pings Postgres and Redis, returns per-dependency status.
@@ -207,6 +211,11 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		logInfo(r, "user registered", "user_id", userID)
 		h.auditLog(r, &userID, "user.registered", nil)
+
+		// Send verification email when required. Non-fatal -- user can request resend later.
+		if h.RequireEmailVerification {
+			h.sendVerificationEmail(r, userID, registerInput.Email)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -283,7 +292,15 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	if !valid {
 		logInfo(r, "login attempted with incorrect password", "user_id", user.ID)
 		h.auditLog(r, &user.ID, "user.login_failed", nil)
-		Unauthorized(w, r, "invalid credentials")
+		Unauthorized(w, r, "invalid credentials. If you need access, try resetting your password.")
+		return
+	}
+
+	// Block login when email verification is required and not yet confirmed.
+	if h.RequireEmailVerification && user.EmailConfirmedAt == nil {
+		logInfo(r, "login blocked: email not verified", "user_id", user.ID)
+		h.auditLog(r, &user.ID, "user.login_failed", nil)
+		Unauthorized(w, r, "email address not verified. Please check your inbox for a verification link.")
 		return
 	}
 
@@ -661,4 +678,81 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	h.auditLog(r, &userID, "user.password_reset_completed", nil)
 	logInfo(r, "user reset password", "user_id", userID)
 	OK(w, "password updated")
+}
+
+// sendVerificationEmail generates a token, stores it, and mails the verification link.
+// Non-fatal: errors are logged but never fail the enclosing request.
+func (h *AuthHandler) sendVerificationEmail(r *http.Request, userID uuid.UUID, email string) {
+	verifyToken, verifyTokenHash, err := GenerateToken()
+	if err != nil {
+		logWarn(r, "failed to generate verification token", "error", err)
+		return
+	}
+
+	tokenID, err := uuid.NewV7()
+	if err != nil {
+		logWarn(r, "failed to generate verification token id", "error", err)
+		return
+	}
+
+	expiresAt := time.Now().Add(24 * time.Hour)
+	if err = h.PS.CreateToken(r.Context(), tokenID, userID, "email_verification", verifyTokenHash[:], expiresAt); err != nil {
+		logWarn(r, "failed to store verification token", "error", err)
+		return
+	}
+
+	tokenStr := base64.RawURLEncoding.EncodeToString(verifyToken[:])
+	if err = h.ML.SendEmailVerification(r.Context(), email, tokenStr, 24*time.Hour, map[string]string{}); err != nil {
+		logWarn(r, "failed to send verification email", "error", err)
+		return
+	}
+	h.auditLog(r, &userID, "user.email_verification_requested", nil)
+}
+
+// VerifyEmail handles POST /verify/email -- consumes a single-use token from
+// the verification link and sets email_confirmed_at for the associated user.
+// Returns 200 on success, 400 for an invalid/expired token, 500 for DB errors.
+func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		logWarn(r, "failed to decode verify email input", "error", err)
+		BadRequest(w, r, "error decoding request body")
+		return
+	}
+	if input.Token == "" {
+		BadRequest(w, r, "token is required")
+		return
+	}
+
+	rawToken, err := base64.RawURLEncoding.DecodeString(input.Token)
+	if err != nil {
+		logWarn(r, "failed to decode verification token", "error", err)
+		BadRequest(w, r, "invalid token")
+		return
+	}
+
+	tokenHash := sha256.Sum256(rawToken)
+	userID, err := h.PS.ConsumeToken(r.Context(), tokenHash[:], "email_verification")
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			logWarn(r, "invalid or expired verification token")
+			BadRequest(w, r, "invalid or expired token")
+			return
+		}
+		logError(r, "failed to consume verification token", "error", err)
+		InternalServerError(w, r, err)
+		return
+	}
+
+	if err = h.PS.SetEmailConfirmedAt(r.Context(), userID); err != nil {
+		logError(r, "failed to set email_confirmed_at", "error", err, "user_id", userID)
+		InternalServerError(w, r, err)
+		return
+	}
+
+	h.auditLog(r, &userID, "user.email_verified", nil)
+	logInfo(r, "email verified", "user_id", userID)
+	OK(w, "email verified")
 }

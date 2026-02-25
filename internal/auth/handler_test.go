@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MGallo-Code/charon/internal/store"
 	"github.com/MGallo-Code/charon/internal/testutil"
@@ -436,7 +437,7 @@ func TestLoginByEmail(t *testing.T) {
 
 		h.LoginByEmail(w, r)
 
-		assertUnauthorized(t, w, "invalid credentials")
+		assertUnauthorized(t, w, "invalid credentials. If you need access, try resetting your password.")
 	})
 
 	// -- Database/system errors (500s) --
@@ -1103,6 +1104,7 @@ func seedConfirmToken(ms *testutil.MockStore, userID uuid.UUID) string {
 		UserID:    userID,
 		TokenType: "password_reset",
 		TokenHash: hash[:],
+		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
@@ -1313,4 +1315,153 @@ func TestPasswordConfirm(t *testing.T) {
 			t.Errorf("body: expected password updated message, got %q", body)
 		}
 	})
+}
+
+func TestLoginByEmail_UnverifiedEmail(t *testing.T) {
+	testPassword := "password123"
+	testHash, _ := HashPassword(testPassword)
+	testEmail := "unverified@example.com"
+	// EmailConfirmedAt is nil (zero value *time.Time) -- email not verified.
+	unverifiedUser := &store.User{
+		ID:           uuid.Must(uuid.NewV7()),
+		Email:        &testEmail,
+		PasswordHash: testHash,
+	}
+
+	t.Run("unverified email blocks login when RequireEmailVerification is true", func(t *testing.T) {
+		h := AuthHandler{
+			PS:                       testutil.NewMockStore(unverifiedUser),
+			RS:                       testutil.NewMockCache(),
+			RL:                       &testutil.MockRateLimiter{},
+			ML:                       &testutil.MockMailer{},
+			RequireEmailVerification: true,
+		}
+
+		body := strings.NewReader(`{"email":"unverified@example.com","password":"password123"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
+		w := httptest.NewRecorder()
+
+		h.LoginByEmail(w, r)
+
+		assertUnauthorized(t, w, "email address not verified. Please check your inbox for a verification link.")
+	})
+
+	t.Run("unverified email is allowed when RequireEmailVerification is false", func(t *testing.T) {
+		h := AuthHandler{
+			PS:                       testutil.NewMockStore(unverifiedUser),
+			RS:                       testutil.NewMockCache(),
+			RL:                       &testutil.MockRateLimiter{},
+			RequireEmailVerification: false,
+		}
+
+		body := strings.NewReader(`{"email":"unverified@example.com","password":"password123"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
+		w := httptest.NewRecorder()
+
+		h.LoginByEmail(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+	})
+}
+
+func TestVerifyEmail(t *testing.T) {
+	// Helper: builds a raw token, stores it in MockStore, returns encoded token string.
+	makeToken := func(t *testing.T, ms *testutil.MockStore, userID uuid.UUID) string {
+		t.Helper()
+		rawToken := make([]byte, 32)
+		if _, err := rand.Read(rawToken); err != nil {
+			t.Fatalf("generating token: %v", err)
+		}
+		hash := sha256.Sum256(rawToken)
+		tokenID := uuid.Must(uuid.NewV7())
+		_ = ms.CreateToken(context.Background(), tokenID, userID, "email_verification", hash[:], nowPlusHour())
+		return base64.RawURLEncoding.EncodeToString(rawToken)
+	}
+
+	testUserID := uuid.Must(uuid.NewV7())
+
+	t.Run("valid token verifies email and returns 200", func(t *testing.T) {
+		ms := testutil.NewMockStore()
+		tokenStr := makeToken(t, ms, testUserID)
+
+		h := AuthHandler{PS: ms, RS: testutil.NewMockCache()}
+		body := strings.NewReader(`{"token":"` + tokenStr + `"}`)
+		r := httptest.NewRequest(http.MethodPost, "/verify/email", body)
+		w := httptest.NewRecorder()
+
+		h.VerifyEmail(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status: expected 200, got %d", w.Code)
+		}
+		bodyBytes, _ := io.ReadAll(w.Body)
+		body2 := strings.TrimSuffix(string(bodyBytes), "\n")
+		if body2 != `{"message":"email verified"}` {
+			t.Errorf("body: got %q, want email verified message", body2)
+		}
+	})
+
+	t.Run("invalid token returns 400", func(t *testing.T) {
+		ms := testutil.NewMockStore()
+		// Encode a random token that was never stored.
+		raw := make([]byte, 32)
+		rand.Read(raw)
+		tokenStr := base64.RawURLEncoding.EncodeToString(raw)
+
+		h := AuthHandler{PS: ms, RS: testutil.NewMockCache()}
+		body := strings.NewReader(`{"token":"` + tokenStr + `"}`)
+		r := httptest.NewRequest(http.MethodPost, "/verify/email", body)
+		w := httptest.NewRecorder()
+
+		h.VerifyEmail(w, r)
+
+		assertBadRequest(t, w, "invalid or expired token")
+	})
+
+	t.Run("bad base64 returns 400", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+		body := strings.NewReader(`{"token":"!!!not-base64!!!"}`)
+		r := httptest.NewRequest(http.MethodPost, "/verify/email", body)
+		w := httptest.NewRecorder()
+
+		h.VerifyEmail(w, r)
+
+		assertBadRequest(t, w, "invalid token")
+	})
+
+	t.Run("empty token returns 400", func(t *testing.T) {
+		h := AuthHandler{PS: &testutil.MockStore{}, RS: testutil.NewMockCache()}
+		body := strings.NewReader(`{"token":""}`)
+		r := httptest.NewRequest(http.MethodPost, "/verify/email", body)
+		w := httptest.NewRecorder()
+
+		h.VerifyEmail(w, r)
+
+		assertBadRequest(t, w, "token is required")
+	})
+
+	t.Run("replayed token returns 400", func(t *testing.T) {
+		ms := testutil.NewMockStore()
+		tokenStr := makeToken(t, ms, testUserID)
+
+		h := AuthHandler{PS: ms, RS: testutil.NewMockCache()}
+
+		// First use -- succeeds.
+		r1 := httptest.NewRequest(http.MethodPost, "/verify/email", strings.NewReader(`{"token":"`+tokenStr+`"}`))
+		h.VerifyEmail(httptest.NewRecorder(), r1)
+
+		// Replay -- ConsumeToken returns ErrNoRows (used_at already set).
+		r2 := httptest.NewRequest(http.MethodPost, "/verify/email", strings.NewReader(`{"token":"`+tokenStr+`"}`))
+		w2 := httptest.NewRecorder()
+		h.VerifyEmail(w2, r2)
+
+		assertBadRequest(t, w2, "invalid or expired token")
+	})
+}
+
+// nowPlusHour is a test helper for token expiry in VerifyEmail tests.
+func nowPlusHour() time.Time {
+	return time.Now().Add(time.Hour)
 }
