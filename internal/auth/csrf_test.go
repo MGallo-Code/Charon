@@ -63,8 +63,8 @@ func assertForbidden(t *testing.T, resp *http.Response) {
 	}
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	body := strings.TrimSuffix(string(bodyBytes), "\n")
-	if body != `{"message":"forbidden"}` {
-		t.Errorf("body: expected {\"message\":\"forbidden\"}, got %q", body)
+	if body != `{"error":"forbidden"}` {
+		t.Errorf("body: expected {\"error\":\"forbidden\"}, got %q", body)
 	}
 }
 

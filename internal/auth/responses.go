@@ -14,7 +14,7 @@ func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusInternalServerError)
 	json.NewEncoder(w).Encode(struct {
-		Message string `json:"message"`
+		Error string `json:"error"`
 	}{"internal server error"})
 }
 
@@ -24,7 +24,7 @@ func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	json.NewEncoder(w).Encode(struct {
-		Message string `json:"message"`
+		Error string `json:"error"`
 	}{message})
 }
 
@@ -34,7 +34,7 @@ func Unauthorized(w http.ResponseWriter, r *http.Request, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	json.NewEncoder(w).Encode(struct {
-		Message string `json:"message"`
+		Error string `json:"error"`
 	}{message})
 }
 
@@ -44,7 +44,7 @@ func Forbidden(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
 	json.NewEncoder(w).Encode(struct {
-		Message string `json:"message"`
+		Error string `json:"error"`
 	}{"forbidden"})
 }
 
@@ -53,7 +53,7 @@ func TooManyRequests(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
 	json.NewEncoder(w).Encode(struct {
-		Message string `json:"message"`
+		Error string `json:"error"`
 	}{"too many requests"})
 }
 

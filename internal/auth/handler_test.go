@@ -37,7 +37,7 @@ func assertBadRequest(t *testing.T, w *httptest.ResponseRecorder, expectedMsg st
 	}
 	bodyBytes, _ := io.ReadAll(w.Body)
 	body := strings.TrimSuffix(string(bodyBytes), "\n")
-	expected := fmt.Sprintf(`{"message":"%s"}`, expectedMsg)
+	expected := fmt.Sprintf(`{"error":"%s"}`, expectedMsg)
 	if body != expected {
 		t.Errorf("body: expected %q, got %q", expected, body)
 	}
@@ -54,7 +54,7 @@ func assertInternalServerError(t *testing.T, w *httptest.ResponseRecorder) {
 	}
 	bodyBytes, _ := io.ReadAll(w.Body)
 	body := strings.TrimSuffix(string(bodyBytes), "\n")
-	if body != `{"message":"internal server error"}` {
+	if body != `{"error":"internal server error"}` {
 		t.Errorf("body: expected internal server error message, got %q", body)
 	}
 }
@@ -70,7 +70,7 @@ func assertUnauthorized(t *testing.T, w *httptest.ResponseRecorder, expectedMsg 
 	}
 	bodyBytes, _ := io.ReadAll(w.Body)
 	body := strings.TrimSuffix(string(bodyBytes), "\n")
-	expected := fmt.Sprintf(`{"message":"%s"}`, expectedMsg)
+	expected := fmt.Sprintf(`{"error":"%s"}`, expectedMsg)
 	if body != expected {
 		t.Errorf("body: expected %q, got %q", expected, body)
 	}
