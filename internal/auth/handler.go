@@ -33,6 +33,9 @@ type SessionCache interface {
 
 	// DeleteAllUserSessions removes all cached sessions for a user.
 	DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error
+
+	// CheckHealth returns nil if Redis is reachable, non-nil otherwise.
+	CheckHealth(ctx context.Context) error
 }
 
 // Store defines database operations needed by auth handlers.
@@ -84,6 +87,9 @@ type Store interface {
 	// WriteAuditLog inserts a single audit event into audit_logs.
 	// Non-fatal: callers log the error but never fail the request on audit write failure.
 	WriteAuditLog(ctx context.Context, entry store.AuditEntry) error
+
+	// CheckHealth returns nil if Postgres is reachable, non-nil otherwise.
+	CheckHealth(ctx context.Context) error
 }
 
 // RateLimiter checks and records rate limit state for a given key and policy.
@@ -116,6 +122,33 @@ type AuthHandler struct {
 	RL       RateLimiter
 	ML       mail.Mailer
 	Policies RateLimitPolicies
+}
+
+// CheckHealth handles GET /health — pings Postgres and Redis, returns per-dependency status.
+// Returns 200 if both are healthy, 503 if either is down.
+func (h *AuthHandler) CheckHealth(w http.ResponseWriter, r *http.Request) {
+	redisStatus := "ok"
+	postgresStatus := "ok"
+
+	if err := h.RS.CheckHealth(r.Context()); err != nil {
+		logError(r, "redis health check failed", "error", err)
+		redisStatus = "error"
+	}
+	if err := h.PS.CheckHealth(r.Context()); err != nil {
+		logError(r, "postgres health check failed", "error", err)
+		postgresStatus = "error"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if redisStatus == "error" || postgresStatus == "error" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+	json.NewEncoder(w).Encode(struct {
+		Postgres string `json:"postgres"`
+		Redis    string `json:"redis"`
+	}{postgresStatus, redisStatus})
 }
 
 // RegisterByEmail handles POST /register — email + password signup.
@@ -376,7 +409,6 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	logInfo(r, "user logged out", "user_id", userID)
 	OK(w, "logged out")
 }
-
 
 // PasswordChange handles POST /password/change...updates the authenticated user's password.
 // Verifies current password, re-hashes the new one, then invalidates all sessions.

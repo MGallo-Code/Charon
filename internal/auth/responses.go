@@ -18,6 +18,17 @@ func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
 	}{"internal server error"})
 }
 
+// ServiceUnavailable logs the error and returns a 503 JSON response.
+// Use when a dependency (Postgres, Redis) is unreachable. Never exposes error details.
+func ServiceUnavailable(w http.ResponseWriter, r *http.Request, err error) {
+	logError(r, "service unavailable", "error", err)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	json.NewEncoder(w).Encode(struct {
+		Error string `json:"error"`
+	}{"service unavailable"})
+}
+
 // BadRequest returns a 400 JSON response with the given message.
 // Use for client input validation failures.
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
