@@ -50,7 +50,7 @@ func main() {
 	defer stop()
 
 	// run() is a separate func so deferred closes (ps, rs) always execute before os.Exit.
-	if err := run(ctx, cfg, nil); err != nil {
+	if err := run(ctx, cfg, nil, nil); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
@@ -60,7 +60,8 @@ func main() {
 // so deferred resource cleanup (ps.Close, rs.Close) always runs.
 // Shuts down when ctx is cancelled (signal handling is the caller's concern).
 // If ready is non-nil, the server's base URL is sent on it once the listener is bound.
-func run(ctx context.Context, cfg *config.Config, ready chan<- string) error {
+// If ml is nil, NopMailer is used.
+func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.Mailer) error {
 	// Create new postgres store, return errors if any
 	ps, err := store.NewPostgresStore(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -88,8 +89,10 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string) error {
 	rs := store.NewRedisStore(rdb)
 	rl := store.NewRedisRateLimiter(rdb)
 
-	// Use NopMailer until SMTP is configured via env vars.
-	var ml mail.Mailer = &mail.NopMailer{}
+	// Use NopMailer if no mailer was injected (production path).
+	if ml == nil {
+		ml = &mail.NopMailer{}
+	}
 
 	// Create AuthHandler
 	h := auth.AuthHandler{
