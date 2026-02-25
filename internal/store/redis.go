@@ -24,7 +24,7 @@ func NewRedisClient(ctx context.Context, redisURL string) (*redis.Client, error)
 	}
 	rdb := redis.NewClient(opt)
 	if err = rdb.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("pinging redis: %w", err)
+		return nil, fmt.Errorf("pinging redis initial: %w", err)
 	}
 	return rdb, nil
 }
@@ -44,6 +44,15 @@ func NewRedisStore(rdb *redis.Client) *RedisStore {
 func (s *RedisStore) Close() error {
 	if err := s.rdb.Close(); err != nil {
 		return fmt.Errorf("closing redis: %w", err)
+	}
+	return nil
+}
+
+// CheckHealth returns an error if there is a problem pinging the cache,
+// returns nil when redis cache is healthy
+func (s *RedisStore) CheckHealth(ctx context.Context) error {
+	if err := s.rdb.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("pinging redis: %w", err)
 	}
 	return nil
 }
