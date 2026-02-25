@@ -203,10 +203,11 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			// Duplicate email -- return same 201 as real registration (no enumeration).
 			// userID was generated above but never persisted; caller can't distinguish.
-			logInfo(r, "registration attempted with existing email")
+			logInfo(r, "register failed", "reason", "duplicate_email", "email", registerInput.Email)
 			meta, _ := json.Marshal(struct {
-				Email string `json:"email"`
-			}{registerInput.Email})
+				Email  string `json:"email"`
+				Reason string `json:"reason"`
+			}{registerInput.Email, "duplicate_email"})
 			h.auditLog(r, nil, "user.register_failed", meta)
 		} else {
 			logError(r, "failed to create user", "error", err)
@@ -219,7 +220,7 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 
 		// Send verification email when required. Non-fatal -- user can request resend later.
 		if h.RequireEmailVerification {
-			h.sendVerificationEmail(r, userID, registerInput.Email)
+			h.sendVerificationEmail(r, userID, registerInput.Email, "registration")
 		}
 	}
 
@@ -261,7 +262,7 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.RL.Allow(r.Context(), "login:email:"+email, h.Policies.LoginEmail); err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
-			logInfo(r, "login rate limited", "email", email)
+			logInfo(r, "login failed", "reason", "rate_limited", "email", email)
 			TooManyRequests(w)
 			return
 		}
@@ -275,10 +276,11 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		// "user not found" nor "DB down" is distinguishable from a real login attempt.
 		_, _ = VerifyPassword(loginInput.Password, dummyPasswordHash())
 		if errors.Is(err, pgx.ErrNoRows) {
-			logInfo(r, "login attempted with non-existent email")
+			logInfo(r, "login failed", "reason", "user_not_found", "email", email)
 			meta, _ := json.Marshal(struct {
-				Email string `json:"email"`
-			}{email})
+				Email  string `json:"email"`
+				Reason string `json:"reason"`
+			}{email, "user_not_found"})
 			h.auditLog(r, nil, "user.login_failed", meta)
 			Unauthorized(w, r, "invalid credentials")
 		} else {
@@ -295,16 +297,22 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !valid {
-		logInfo(r, "login attempted with incorrect password", "user_id", user.ID)
-		h.auditLog(r, &user.ID, "user.login_failed", nil)
+		logInfo(r, "login failed", "reason", "wrong_password", "user_id", user.ID)
+		meta, _ := json.Marshal(struct {
+			Reason string `json:"reason"`
+		}{"wrong_password"})
+		h.auditLog(r, &user.ID, "user.login_failed", meta)
 		Unauthorized(w, r, "invalid credentials. If you need access, try resetting your password.")
 		return
 	}
 
 	// Block login when email verification is required and not yet confirmed.
 	if h.RequireEmailVerification && user.EmailConfirmedAt == nil {
-		logInfo(r, "login blocked: email not verified", "user_id", user.ID)
-		h.auditLog(r, &user.ID, "user.login_failed", nil)
+		logInfo(r, "login failed", "reason", "email_not_verified", "user_id", user.ID)
+		meta, _ := json.Marshal(struct {
+			Reason string `json:"reason"`
+		}{"email_not_verified"})
+		h.auditLog(r, &user.ID, "user.login_failed", meta)
 		Unauthorized(w, r, "email address not verified. Please check your inbox for a verification link.")
 		return
 	}
@@ -357,7 +365,10 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	SetSessionCookie(w, *token, expiresAt)
-	h.auditLog(r, &user.ID, "user.login", nil)
+	meta, _ := json.Marshal(struct {
+		RememberMe bool `json:"remember_me"`
+	}{loginInput.RememberMe})
+	h.auditLog(r, &user.ID, "user.login", meta)
 	logInfo(r, "user logged in successfully", "user_id", user.ID, "remember_me", loginInput.RememberMe)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -536,7 +547,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	err := h.RL.Allow(r.Context(), "reset:email:"+email, h.Policies.PasswordReset)
 	if err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
-			logInfo(r, "password reset rate limited", "email", email)
+			logInfo(r, "password reset failed", "reason", "rate_limited", "email", email)
 			TooManyRequests(w)
 			return
 		}
@@ -550,7 +561,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	user, err := h.PS.GetUserByEmail(r.Context(), email)
 	if err != nil {
 		// Generic 200 -- no enumeration (caller cannot learn whether email exists)
-		logInfo(r, "password reset requested for unknown email")
+		logInfo(r, "password reset failed", "reason", "user_not_found", "email", email)
 		OK(w, resetMsg)
 		return
 	}
@@ -682,8 +693,8 @@ func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 // sendVerificationEmail generates a token, stores it, and mails the verification link.
-// Non-fatal: errors are logged but never fail the enclosing request.
-func (h *AuthHandler) sendVerificationEmail(r *http.Request, userID uuid.UUID, email string) {
+// trigger identifies the source: "registration" or "resend". Non-fatal: errors are logged but never fail the enclosing request.
+func (h *AuthHandler) sendVerificationEmail(r *http.Request, userID uuid.UUID, email, trigger string) {
 	verifyToken, verifyTokenHash, err := GenerateToken()
 	if err != nil {
 		logWarn(r, "failed to generate verification token", "error", err)
@@ -707,7 +718,10 @@ func (h *AuthHandler) sendVerificationEmail(r *http.Request, userID uuid.UUID, e
 		logWarn(r, "failed to send verification email", "error", err)
 		return
 	}
-	h.auditLog(r, &userID, "user.email_verification_requested", nil)
+	meta, _ := json.Marshal(struct {
+		Trigger string `json:"trigger"`
+	}{trigger})
+	h.auditLog(r, &userID, "user.email_verification_requested", meta)
 }
 
 // ResendVerificationEmail handles POST /resend/verification-email -- re-sends the verification link.
@@ -734,7 +748,7 @@ func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Req
 
 	if err := h.RL.Allow(r.Context(), "resend:email:"+email, h.Policies.ResendVerification); err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
-			logInfo(r, "resend verification email rate limited", "email", email)
+			logInfo(r, "resend verification failed", "reason", "rate_limited", "email", email)
 			TooManyRequests(w)
 			return
 		}
@@ -748,20 +762,20 @@ func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Req
 		if !errors.Is(err, pgx.ErrNoRows) {
 			logWarn(r, "failed to fetch user for resend verification", "error", err)
 		} else {
-			logInfo(r, "resend verification requested for unknown email")
+			logInfo(r, "resend verification failed", "reason", "user_not_found", "email", email)
 		}
 		OK(w, resendMsg)
 		return
 	}
 
 	if user.EmailConfirmedAt != nil {
-		logInfo(r, "resend verification requested but email already confirmed", "user_id", user.ID)
+		logInfo(r, "resend verification failed", "reason", "already_confirmed", "user_id", user.ID)
 		OK(w, resendMsg)
 		return
 	}
 
 	// sendVerificationEmail handles its own logging and audit.
-	h.sendVerificationEmail(r, user.ID, *user.Email)
+	h.sendVerificationEmail(r, user.ID, *user.Email, "resend")
 	OK(w, resendMsg)
 }
 
