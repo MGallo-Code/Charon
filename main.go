@@ -49,25 +49,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Build mailer from config; fall back to NopMailer if SMTP_HOST is unset.
-	// NopMailer silently discards all email -- log a prominent warning so misconfiguration is visible.
-	var ml mail.Mailer = &mail.NopMailer{}
-	if cfg.SMTPHost == "" {
-		slog.Warn("SMTP not configured: all outbound email is disabled (set SMTP_HOST to enable)")
-	} else {
-		ml = mail.NewSMTPMailer(mail.SMTPConfig{
-			Host:          cfg.SMTPHost,
-			Port:          cfg.SMTPPort,
-			Username:      cfg.SMTPUsername,
-			Password:      cfg.SMTPPassword,
-			FromAddress:   cfg.SMTPFromAddress,
-			ResetURLBase:  cfg.SMTPResetURLBase,
-			VerifyURLBase: cfg.SMTPVerifyURLBase,
-		})
-	}
-
 	// run() is a separate func so deferred closes (ps, rs) always execute before os.Exit.
-	if err := run(ctx, cfg, nil, ml); err != nil {
+	// Passing nil for ml, run() builds the real mailer from config after Redis is ready.
+	if err := run(ctx, cfg, nil, nil); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
@@ -106,12 +90,35 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 	rs := store.NewRedisStore(rdb)
 	rl := store.NewRedisRateLimiter(rdb)
 
+	// Build production mailer when not injected by tests.
+	// NopMailer is used when SMTP_HOST is unset - log a warning so misconfiguration is visible.
+	if ml == nil {
+		if cfg.SMTPHost == "" {
+			slog.Warn("SMTP not configured: all outbound email is disabled (set SMTP_HOST to enable)")
+			ml = &mail.NopMailer{}
+		} else {
+			smtp := mail.NewSMTPMailer(mail.SMTPConfig{
+				Host:          cfg.SMTPHost,
+				Port:          cfg.SMTPPort,
+				Username:      cfg.SMTPUsername,
+				Password:      cfg.SMTPPassword,
+				FromAddress:   cfg.SMTPFromAddress,
+				ResetURLBase:  cfg.SMTPResetURLBase,
+				VerifyURLBase: cfg.SMTPVerifyURLBase,
+			})
+			qm := mail.NewQueuedMailer(smtp, rdb, mail.DefaultMaxQueueSize)
+			go qm.StartWorker(ctx)
+			ml = qm
+		}
+	}
+
 	// Create AuthHandler
 	h := auth.AuthHandler{
-		PS: ps,
-		RS: rs,
-		RL: rl,
-		ML: ml,
+		PS:                       ps,
+		RS:                       rs,
+		RL:                       rl,
+		ML:                       ml,
+		RequireEmailVerification: cfg.RequireEmailVerification,
 		Policies: auth.RateLimitPolicies{
 			LoginEmail: store.RateLimit{
 				MaxAttempts: cfg.RateLoginEmailMax,
@@ -209,6 +216,7 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	r.Get("/health", h.CheckHealth)
 	r.Post("/register/email", h.RegisterByEmail)
 	r.Post("/login/email", h.LoginByEmail)
+	r.Post("/verify/email", h.VerifyEmail)
 	r.Post("/password/reset", h.PasswordReset)
 	r.Post("/password/confirm", h.PasswordConfirm)
 
