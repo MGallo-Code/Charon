@@ -20,11 +20,15 @@ import (
 	"time"
 
 	"github.com/MGallo-Code/charon/internal/config"
+	"github.com/MGallo-Code/charon/internal/testutil"
 )
 
 // e2eServerURL is the base URL of the running test server.
 // Empty if the compose stack is not up; e2e tests skip in that case.
 var e2eServerURL string
+
+// e2eMailer captures outbound password reset emails so e2e tests can extract the token.
+var e2eMailer = &testutil.MockMailer{}
 
 func TestMain(m *testing.M) {
 	cfg := &config.Config{
@@ -39,7 +43,7 @@ func TestMain(m *testing.M) {
 	runErr := make(chan error, 1)
 
 	go func() {
-		runErr <- run(ctx, cfg, ready)
+		runErr <- run(ctx, cfg, ready, e2eMailer)
 	}()
 
 	// Wait for server ready or startup failure (compose stack not running).
@@ -403,4 +407,90 @@ func TestE2E_PasswordChange_DoesNotAffectOtherUser(t *testing.T) {
 
 	// User B must still be able to log in with their original password
 	_, _ = e2eLogin(t, emailB, passwordB)
+}
+
+// e2eRequestPasswordReset calls POST /password/reset and returns the reset token
+// captured by e2eMailer. Fatals if the request fails or no token is captured.
+func e2eRequestPasswordReset(t *testing.T, email string) string {
+	t.Helper()
+	e2eMailer.LastSentToken = "" // clear previous capture
+	resp, err := http.Post(e2eServerURL+"/password/reset", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q}`, email)))
+	if err != nil {
+		t.Fatalf("POST /password/reset: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("password/reset: expected 200, got %d", resp.StatusCode)
+	}
+	if e2eMailer.LastSentToken == "" {
+		t.Fatal("password/reset: no token captured by mock mailer")
+	}
+	return e2eMailer.LastSentToken
+}
+
+// e2ePasswordConfirm calls POST /password/confirm with token and new password.
+// Returns the response; caller must close the body.
+func e2ePasswordConfirm(t *testing.T, token, newPassword string) *http.Response {
+	t.Helper()
+	resp, err := http.Post(e2eServerURL+"/password/confirm", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"token":%q,"new_password":%q}`, token, newPassword)))
+	if err != nil {
+		t.Fatalf("POST /password/confirm: %v", err)
+	}
+	return resp
+}
+
+// TestE2E_PasswordReset_FullFlow verifies the full password reset flow against
+// real Postgres + Redis: request reset email, confirm with token, old sessions cleared,
+// old password rejected, new password works, and token replay rejected.
+func TestE2E_PasswordReset_FullFlow(t *testing.T) {
+	skipIfNoE2E(t)
+
+	email := fmt.Sprintf("e2e-pwdreset-full-%d@example.com", time.Now().UnixNano())
+	oldPassword := "oldresetpass1"
+	newPassword := "newresetpass1"
+
+	// Step 1: Register + create two sessions
+	e2eRegister(t, email, oldPassword)
+	cookie1, csrf1 := e2eLogin(t, email, oldPassword)
+	_, _ = e2eLogin(t, email, oldPassword) // second session
+
+	// Step 2: Request password reset — capture token via mock mailer
+	token := e2eRequestPasswordReset(t, email)
+
+	// Step 3: Confirm with the token
+	confirmResp := e2ePasswordConfirm(t, token, newPassword)
+	defer confirmResp.Body.Close()
+	if confirmResp.StatusCode != http.StatusOK {
+		t.Fatalf("password/confirm: expected 200, got %d", confirmResp.StatusCode)
+	}
+
+	// Step 4: Old sessions must be cleared — authenticated request must return 401
+	stalResp := e2eAuthPost(t, "/logout", cookie1, csrf1, "")
+	stalResp.Body.Close()
+	if stalResp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("stale session after reset: expected 401, got %d", stalResp.StatusCode)
+	}
+
+	// Step 5: Old password must be rejected
+	resp, err := http.Post(e2eServerURL+"/login/email", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":%q}`, email, oldPassword)))
+	if err != nil {
+		t.Fatalf("POST /login/email (old password): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("login with old password: expected 401, got %d", resp.StatusCode)
+	}
+
+	// Step 6: New password must work
+	_, _ = e2eLogin(t, email, newPassword)
+
+	// Step 7: Token replay must be rejected
+	replayResp := e2ePasswordConfirm(t, token, "anotherpassword1")
+	replayResp.Body.Close()
+	if replayResp.StatusCode != http.StatusBadRequest {
+		t.Errorf("token replay: expected 400, got %d", replayResp.StatusCode)
+	}
 }
