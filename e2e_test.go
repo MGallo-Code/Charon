@@ -424,7 +424,7 @@ func TestE2E_PasswordChange_DoesNotAffectOtherUser(t *testing.T) {
 // captured by e2eMailer. Fatals if the request fails or no token is captured.
 func e2eRequestPasswordReset(t *testing.T, email string) string {
 	t.Helper()
-	e2eMailer.LastSentToken = "" // clear previous capture
+	e2eMailer.LastResetToken = "" // clear previous capture
 	resp, err := http.Post(e2eServerURL+"/password/reset", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q}`, email)))
 	if err != nil {
@@ -434,10 +434,10 @@ func e2eRequestPasswordReset(t *testing.T, email string) string {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("password/reset: expected 200, got %d", resp.StatusCode)
 	}
-	if e2eMailer.LastSentToken == "" {
+	if e2eMailer.LastResetToken == "" {
 		t.Fatal("password/reset: no token captured by mock mailer")
 	}
-	return e2eMailer.LastSentToken
+	return e2eMailer.LastResetToken
 }
 
 // e2ePasswordConfirm calls POST /password/confirm with token and new password.

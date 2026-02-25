@@ -41,7 +41,7 @@ type MockStore struct {
 
 	Users    map[string]*store.User    // keyed by email
 	Sessions map[string]*store.Session // keyed by string(tokenHash)
-	Tokens   map[string]*store.Token  // keyed by string(tokenHash)
+	Tokens   map[string]*store.Token   // keyed by string(tokenHash)
 
 	mu sync.Mutex
 }
@@ -332,16 +332,37 @@ func (m *MockRateLimiter) Allow(_ context.Context, _ string, _ store.RateLimit) 
 }
 
 // MockMailer implements mail.Mailer for tests.
-// Set SendPasswordResetErr to inject send failures.
-// LastSentTo and LastSentToken capture the most recent call's arguments.
+// Set *Err fields to inject send failures.
+// Last* fields capture the most recent call's arguments for each method.
 type MockMailer struct {
-	SendPasswordResetErr error
-	LastSentTo           string
-	LastSentToken        string
+	SendPasswordResetErr     error
+	SendEmailVerificationErr error
+
+	// Password reset captures
+	LastResetTo        string
+	LastResetToken     string
+	LastResetFirstName *string
+	LastResetLastName  *string
+
+	// Email verification captures
+	LastVerifTo        string
+	LastVerifToken     string
+	LastVerifFirstName *string
+	LastVerifLastName  *string
 }
 
-func (m *MockMailer) SendPasswordReset(_ context.Context, toEmail, token string) error {
-	m.LastSentTo = toEmail
-	m.LastSentToken = token
+func (m *MockMailer) SendPasswordReset(_ context.Context, toEmail, token string, firstName, lastName *string) error {
+	m.LastResetTo = toEmail
+	m.LastResetToken = token
+	m.LastResetFirstName = firstName
+	m.LastResetLastName = lastName
 	return m.SendPasswordResetErr
+}
+
+func (m *MockMailer) SendEmailVerification(_ context.Context, toEmail, token string, firstName, lastName *string) error {
+	m.LastVerifTo = toEmail
+	m.LastVerifToken = token
+	m.LastVerifFirstName = firstName
+	m.LastVerifLastName = lastName
+	return m.SendEmailVerificationErr
 }

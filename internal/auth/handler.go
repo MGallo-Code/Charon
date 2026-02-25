@@ -562,7 +562,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send pwd reset
-	err = h.ML.SendPasswordReset(r.Context(), *user.Email, base64.RawURLEncoding.EncodeToString(token[:]))
+	err = h.ML.SendPasswordReset(r.Context(), *user.Email, base64.RawURLEncoding.EncodeToString(token[:]), user.FirstName, user.LastName)
 	if err != nil {
 		logError(r, "failed to send password reset email", "error", err, "user_id", user.ID)
 		OK(w, resetMsg)

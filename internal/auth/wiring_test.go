@@ -455,7 +455,7 @@ func TestWiring_PasswordReset_TokenRoundTrip(t *testing.T) {
 	// PasswordReset: stores SHA-256 hash in ms.Tokens, sends base64 raw token to mailer.
 	doPasswordReset(t, h, email)
 
-	token := mailer.LastSentToken
+	token := mailer.LastResetToken
 	if token == "" {
 		t.Fatal("PasswordReset: expected mailer to capture token, got empty string")
 	}
@@ -488,7 +488,7 @@ func TestWiring_PasswordConfirm_ClearsSessions(t *testing.T) {
 
 	// Initiate reset and capture token.
 	doPasswordReset(t, h, email)
-	token := mailer.LastSentToken
+	token := mailer.LastResetToken
 
 	// Confirm -- should clear all sessions for this user in both store and cache.
 	w := doPasswordConfirm(t, h, token, "newpassword1")

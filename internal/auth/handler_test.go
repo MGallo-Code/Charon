@@ -1057,10 +1057,10 @@ func TestPasswordReset(t *testing.T) {
 		h.PasswordReset(w, r)
 
 		assertGenericResetResponse(t, w)
-		if mailer.LastSentTo != email {
-			t.Errorf("email sent to: expected %q, got %q", email, mailer.LastSentTo)
+		if mailer.LastResetTo != email {
+			t.Errorf("email sent to: expected %q, got %q", email, mailer.LastResetTo)
 		}
-		if mailer.LastSentToken == "" {
+		if mailer.LastResetToken == "" {
 			t.Error("expected a token to be sent, got empty string")
 		}
 	})
@@ -1079,8 +1079,8 @@ func TestPasswordReset(t *testing.T) {
 		h.PasswordReset(w, r)
 
 		assertGenericResetResponse(t, w)
-		if mailer.LastSentTo != email {
-			t.Errorf("email sent to: expected normalised %q, got %q", email, mailer.LastSentTo)
+		if mailer.LastResetTo != email {
+			t.Errorf("email sent to: expected normalised %q, got %q", email, mailer.LastResetTo)
 		}
 	})
 }

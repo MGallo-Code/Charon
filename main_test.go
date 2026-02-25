@@ -380,9 +380,9 @@ func TestSmoke_PasswordReset_FullRoundTrip(t *testing.T) {
 	if resetResp.StatusCode != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d", resetResp.StatusCode)
 	}
-	token := mailer.LastSentToken
+	token := mailer.LastResetToken
 	if token == "" {
-		t.Fatal("mailer.LastSentToken is empty after reset request")
+		t.Fatal("mailer.LastResetToken is empty after reset request")
 	}
 
 	// Step 2: Confirm with captured token and new password -- expect 200.
