@@ -36,6 +36,13 @@ func TestMain(m *testing.M) {
 		RedisURL:    envOrDefault("TEST_REDIS_URL", "redis://localhost:6380"),
 		Port:        "0", // OS picks a free port
 		LogLevel:    slog.LevelWarn,
+		// Rate limit defaults -- must be non-zero or the Lua script gets invalid TTLs.
+		RateLoginEmailMax:     10,
+		RateLoginEmailWindow:  10 * time.Minute,
+		RateLoginEmailLockout: 15 * time.Minute,
+		RateResetMax:          3,
+		RateResetWindow:       time.Hour,
+		RateResetLockout:      time.Hour,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
