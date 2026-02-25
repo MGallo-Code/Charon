@@ -50,8 +50,11 @@ func main() {
 	defer stop()
 
 	// Build mailer from config; fall back to NopMailer if SMTP_HOST is unset.
+	// NopMailer silently discards all email -- log a prominent warning so misconfiguration is visible.
 	var ml mail.Mailer = &mail.NopMailer{}
-	if cfg.SMTPHost != "" {
+	if cfg.SMTPHost == "" {
+		slog.Warn("SMTP not configured: all outbound email is disabled (set SMTP_HOST to enable)")
+	} else {
 		ml = mail.NewSMTPMailer(mail.SMTPConfig{
 			Host:          cfg.SMTPHost,
 			Port:          cfg.SMTPPort,

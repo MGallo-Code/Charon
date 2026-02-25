@@ -93,6 +93,17 @@ func LoadConfig() (*Config, error) {
 	cfg.SMTPResetURLBase = os.Getenv("SMTP_RESET_URL")
 	cfg.SMTPVerifyURLBase = os.Getenv("SMTP_VERIFY_URL")
 
+	// When SMTP is configured, URL bases must be present and use HTTPS.
+	// Tokens in reset/verify links must not travel over plain HTTP.
+	if cfg.SMTPHost != "" {
+		if !strings.HasPrefix(cfg.SMTPResetURLBase, "https://") {
+			return nil, fmt.Errorf("SMTP_RESET_URL must be set and start with https://")
+		}
+		if !strings.HasPrefix(cfg.SMTPVerifyURLBase, "https://") {
+			return nil, fmt.Errorf("SMTP_VERIFY_URL must be set and start with https://")
+		}
+	}
+
 	// Rate limit: login by email. All three fields required -- if any are missing or invalid,
 	// fall back to the default so a misconfigured env doesn't silently disable rate limiting.
 	cfg.RateLoginEmailMax = envInt("RATE_LOGIN_EMAIL_MAX", 10)
