@@ -31,7 +31,7 @@ func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, 
 	// Ping db to make sure connection works
 	err = pool.Ping(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pinging database: %w", err)
+		return nil, fmt.Errorf("pinging database initial: %w", err)
 	}
 
 	return &PostgresStore{pool}, nil
@@ -40,6 +40,15 @@ func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, 
 // Close shuts down connection pool, releases all resources.
 func (s *PostgresStore) Close() {
 	s.pool.Close()
+}
+
+// CheckHealth returns an error if there is a problem pinging the database,
+// returns nil when database is healthy
+func (s *PostgresStore) CheckHealth(ctx context.Context) error {
+	if err := s.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("pinging database: %w", err)
+	}
+	return nil
 }
 
 // CreateUserByEmail inserts new user with email and password hash.
