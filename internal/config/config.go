@@ -166,6 +166,31 @@ func LoadConfig() (*Config, error) {
 	return cfg, nil
 }
 
+// WarnIfMisconfigured logs a warning for any rate limit policy with a zero Window or LockoutTTL.
+// Zero durations cause Redis Lua script failures at request time; catching them at startup is safer.
+// Call from run() so configs built directly (e.g. in tests) are also validated.
+func (c *Config) WarnIfMisconfigured() {
+	type policy struct {
+		name    string
+		window  time.Duration
+		lockout time.Duration
+	}
+	policies := []policy{
+		{"RATE_REGISTER_EMAIL", c.RateRegisterEmailWindow, c.RateRegisterEmailLockout},
+		{"RATE_LOGIN_EMAIL", c.RateLoginEmailWindow, c.RateLoginEmailLockout},
+		{"RATE_RESET", c.RateResetWindow, c.RateResetLockout},
+		{"RATE_RESEND", c.RateResendWindow, c.RateResendLockout},
+	}
+	for _, p := range policies {
+		if p.window <= 0 {
+			slog.Warn("rate limit policy misconfigured: zero Window will cause Redis errors", "policy", p.name)
+		}
+		if p.lockout <= 0 {
+			slog.Warn("rate limit policy misconfigured: zero LockoutTTL will cause Redis errors", "policy", p.name)
+		}
+	}
+}
+
 // envInt reads an env var as int, returning def if missing or unparseable.
 func envInt(key string, def int) int {
 	v := os.Getenv(key)

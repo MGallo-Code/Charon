@@ -63,6 +63,10 @@ func main() {
 // If ready is non-nil, the server's base URL is sent on it once the listener is bound.
 // If ml is nil, NopMailer is used.
 func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.Mailer) error {
+	// Warn early if any rate limit policy has zero Window or LockoutTTL.
+	// Zero durations cause cryptic Redis Lua errors at request time.
+	cfg.WarnIfMisconfigured()
+
 	// Create new postgres store, return errors if any
 	ps, err := store.NewPostgresStore(ctx, cfg.DatabaseURL)
 	if err != nil {
