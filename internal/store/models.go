@@ -13,6 +13,10 @@ import (
 // Callers use errors.Is to distinguish rate limit rejections from Redis failures.
 var ErrRateLimitExceeded = errors.New("rate limit exceeded")
 
+// ErrNoPassword is returned by GetPwdHashByUserID when the user exists but has no password_hash.
+// This occurs for OAuth-only users.
+var ErrNoPassword = errors.New("user has no password")
+
 // ErrCacheMiss is returned by GetSession when the key is not in Redis.
 // Callers use errors.Is to distinguish a true miss from a Redis infrastructure failure.
 var ErrCacheMiss = errors.New("cache miss")
@@ -27,7 +31,7 @@ type User struct {
 	PhoneConfirmedAt *time.Time
 	FirstName        *string
 	LastName         *string
-	PasswordHash     string
+	PasswordHash     *string
 	OAuthProvider    *string
 	OAuthProviderID  *string
 	AvatarURL        *string

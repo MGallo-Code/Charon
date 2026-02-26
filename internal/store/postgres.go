@@ -95,8 +95,9 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 
 // GetPwdHashByUserID fetches Argon2id password hash for the given user.
 // Returns pgx.ErrNoRows if no user exists with that ID.
+// Returns ErrNoPassword if the user exists but has no password_hash (OAuth-only account).
 func (s *PostgresStore) GetPwdHashByUserID(ctx context.Context, id uuid.UUID) (string, error) {
-	var passwordHash string
+	var passwordHash *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT password_hash
 		FROM users
@@ -105,7 +106,10 @@ func (s *PostgresStore) GetPwdHashByUserID(ctx context.Context, id uuid.UUID) (s
 	if err != nil {
 		return "", fmt.Errorf("fetching password hash by user id: %w", err)
 	}
-	return passwordHash, nil
+	if passwordHash == nil {
+		return "", fmt.Errorf("fetching password hash by user id: %w", ErrNoPassword)
+	}
+	return *passwordHash, nil
 }
 
 // UpdateUserPassword replaces the stored Argon2id hash for the given user.
