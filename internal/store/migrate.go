@@ -33,18 +33,26 @@ func (s *PostgresStore) Migrate(ctx context.Context, migrationsFS fs.FS) error {
 	}
 	sort.Strings(entries)
 
-	for _, filename := range entries {
-		// Check if migration already applied
-		var exists bool
-		err := s.pool.QueryRow(ctx,
-			"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)",
-			filename,
-		).Scan(&exists)
-		if err != nil {
-			return fmt.Errorf("checking migration %s: %w", filename, err)
+	// Fetch all applied versions in one query -- avoids N round trips on startup.
+	rows, err := s.pool.Query(ctx, "SELECT version FROM schema_migrations")
+	if err != nil {
+		return fmt.Errorf("reading applied migrations: %w", err)
+	}
+	defer rows.Close()
+	applied := make(map[string]bool)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return fmt.Errorf("scanning applied migration: %w", err)
 		}
-		// If migration been applied, skip
-		if exists {
+		applied[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading applied migrations: %w", err)
+	}
+
+	for _, filename := range entries {
+		if applied[filename] {
 			slog.Info("migration already applied, skipping", "version", filename)
 			continue
 		}
