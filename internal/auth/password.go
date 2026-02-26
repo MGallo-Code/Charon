@@ -145,10 +145,11 @@ const specialChars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 func (p PasswordPolicy) Validate(password string) []string {
 	var failures []string
 
-	if p.MinLength > 0 && utf8.RuneCountInString(password) < p.MinLength {
+	runeCount := utf8.RuneCountInString(password)
+	if p.MinLength > 0 && runeCount < p.MinLength {
 		failures = append(failures, fmt.Sprintf("password must be at least %d characters", p.MinLength))
 	}
-	if p.MaxLength > 0 && utf8.RuneCountInString(password) > p.MaxLength {
+	if p.MaxLength > 0 && runeCount > p.MaxLength {
 		failures = append(failures, fmt.Sprintf("password must be at most %d characters", p.MaxLength))
 	}
 
