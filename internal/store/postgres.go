@@ -77,11 +77,11 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (*User
 
 	// Query db for user info where email matches
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, password_hash, email_confirmed_at
+		SELECT id, password_hash, email_confirmed_at, first_name, last_name
 		FROM users
 		WHERE email = $1;
 	`, email).Scan(
-		&user.ID, &user.PasswordHash, &user.EmailConfirmedAt,
+		&user.ID, &user.PasswordHash, &user.EmailConfirmedAt, &user.FirstName, &user.LastName,
 	)
 
 	// If err, return it
@@ -144,7 +144,7 @@ func (s *PostgresStore) CreateSession(ctx context.Context, id uuid.UUID, userID 
 	`, id, userID, tokenHash, csrfToken, expiresAt, ip, userAgent)
 	// if err, report!
 	if err != nil {
-		return fmt.Errorf("inserting session: %w", err)
+		return fmt.Errorf("creating session: %w", err)
 	}
 	return nil
 }
@@ -207,7 +207,7 @@ func (s *PostgresStore) CreateToken(ctx context.Context, id, userID uuid.UUID, t
 			($1, $2, $3, $4, $5, NOW())
 	`, id, userID, tokenType, tokenHash, expiresAt)
 	if err != nil {
-		return fmt.Errorf("inserting token: %w", err)
+		return fmt.Errorf("creating token: %w", err)
 	}
 	return nil
 }
@@ -258,7 +258,8 @@ func (s *PostgresStore) MarkTokenUsed(ctx context.Context, tokenHash []byte) err
 func (s *PostgresStore) SetEmailConfirmedAt(ctx context.Context, userID uuid.UUID) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE users
-		SET email_confirmed_at = NOW()
+		SET email_confirmed_at = NOW(),
+			updated_at = NOW()
 		WHERE id = $1
 			AND email_confirmed_at IS NULL
 	`, userID)
@@ -298,7 +299,59 @@ func (s *PostgresStore) WriteAuditLog(ctx context.Context, entry AuditEntry) err
 			($1, $2, $3, $4, $5)
 	`, entry.UserID, entry.Action, entry.IPAddress, entry.UserAgent, entry.Metadata)
 	if err != nil {
-		return fmt.Errorf("inserting audit log: %w", err)
+		return fmt.Errorf("creating audit log: %w", err)
+	}
+	return nil
+}
+
+// GetUserByOAuthProvider fetches a user by oauth_provider + oauth_provider_id.
+func (s *PostgresStore) GetUserByOAuthProvider(ctx context.Context, oauthProvider, oauthProviderID string) (*User, error) {
+	user := &User{
+		OAuthProvider:   &oauthProvider,
+		OAuthProviderID: &oauthProviderID,
+	}
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			id, email, email_confirmed_at
+		FROM users
+		WHERE oauth_provider = $1
+			AND oauth_provider_id = $2
+	`, oauthProvider, oauthProviderID).Scan(&user.ID, &user.Email, &user.EmailConfirmedAt)
+	if err != nil {
+		return nil, fmt.Errorf("fetching user by oauth provider: %w", err)
+	}
+	return user, nil
+}
+
+// CreateOAuthUser inserts a new user authenticated via an OAuth provider.
+func (s *PostgresStore) CreateOAuthUser(ctx context.Context, id uuid.UUID, email, oauthProvider, oauthProviderID string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO users
+			(id, email, oauth_provider, oauth_provider_id, email_confirmed_at)
+		VALUES
+			($1, $2, $3, $4, NOW())
+	`, id, email, oauthProvider, oauthProviderID)
+	if err != nil {
+		return fmt.Errorf("creating oauth user: %w", err)
+	}
+	return nil
+}
+
+// LinkOAuthToUser sets oauth_provider and oauth_provider_id on an existing user.
+func (s *PostgresStore) LinkOAuthToUser(ctx context.Context, id uuid.UUID, oauthProvider, oauthProviderID string) error {
+	result, err := s.pool.Exec(ctx, `
+		UPDATE users
+		SET oauth_provider = $1,
+			oauth_provider_id = $2,
+			updated_at = NOW()
+		WHERE id = $3
+			AND oauth_provider IS NULL
+	`, oauthProvider, oauthProviderID, id)
+	if err != nil {
+		return fmt.Errorf("linking oauth to user: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("linking oauth to not-found user: %w", pgx.ErrNoRows)
 	}
 	return nil
 }

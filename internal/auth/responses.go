@@ -49,6 +49,15 @@ func Unauthorized(w http.ResponseWriter, r *http.Request, message string) {
 	}{message})
 }
 
+// NotFound returns a 404 JSON response.
+func NotFound(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(struct {
+		Error string `json:"error"`
+	}{"not found"})
+}
+
 // Forbidden returns a 403 JSON response with a generic message.
 // Intentionally vague, avoids leaking which validation stage failed.
 func Forbidden(w http.ResponseWriter) {

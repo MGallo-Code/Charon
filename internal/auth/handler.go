@@ -88,6 +88,18 @@ type Store interface {
 	// Non-fatal: callers log the error but never fail the request on audit write failure.
 	WriteAuditLog(ctx context.Context, entry store.AuditEntry) error
 
+	// GetUserByOAuthProvider fetches user by OAuth provider name and provider-specific user ID.
+	// Returns pgx.ErrNoRows if no user exists with that provider identity.
+	GetUserByOAuthProvider(ctx context.Context, provider, providerID string) (*store.User, error)
+
+	// CreateOAuthUser inserts a new user authenticated via OAuth.
+	// Sets email_confirmed_at automatically; no password_hash.
+	CreateOAuthUser(ctx context.Context, id uuid.UUID, email, provider, providerID string) error
+
+	// LinkOAuthToUser sets oauth_provider and oauth_provider_id for a user with no provider linked.
+	// Returns pgx.ErrNoRows if the user already has a provider linked.
+	LinkOAuthToUser(ctx context.Context, userID uuid.UUID, provider, providerID string) error
+
 	// CheckHealth returns nil if Postgres is reachable, non-nil otherwise.
 	CheckHealth(ctx context.Context) error
 }
