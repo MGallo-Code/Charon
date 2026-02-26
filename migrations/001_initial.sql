@@ -27,8 +27,12 @@ CREATE TABLE IF NOT EXISTS users (
     CHECK ((oauth_provider IS NULL) = (oauth_provider_id IS NULL)),
     -- No duplicate oauth users...
     UNIQUE (oauth_provider, oauth_provider_id),
-    -- If user has email or phone, password is required...
-    CHECK ((email IS NULL AND phone IS NULL) OR password_hash IS NOT NULL)
+    -- If user has email or phone, must have password OR oauth provider...
+    CHECK (
+        (email IS NULL AND phone IS NULL)
+        OR password_hash IS NOT NULL
+        OR oauth_provider IS NOT NULL
+    )
 );
 
 
