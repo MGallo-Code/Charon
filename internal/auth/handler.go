@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MGallo-Code/charon/internal/mail"
+	"github.com/MGallo-Code/charon/internal/oauth"
 	"github.com/MGallo-Code/charon/internal/store"
 	"github.com/gofrs/uuid/v5"
 	"github.com/jackc/pgx/v5"
@@ -147,6 +148,10 @@ type AuthHandler struct {
 
 	// Policy defines password complexity rules for registration and password changes.
 	Policy PasswordPolicy
+
+	// OAuthProviders is a map of registered OAuth providers keyed by provider name (e.g. "google").
+	// Nil or missing key disables that provider -- handlers return 404.
+	OAuthProviders map[string]oauth.Provider
 }
 
 // CheckHealth handles GET /health — pings Postgres and Redis, returns per-dependency status.
@@ -503,6 +508,10 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 	// Fetch stored hash for current password verification.
 	passwordHash, err := h.PS.GetPwdHashByUserID(r.Context(), id)
 	if err != nil {
+		if errors.Is(err, store.ErrNoPassword) {
+			BadRequest(w, r, "password change is not available for OAuth-only accounts")
+			return
+		}
 		InternalServerError(w, r, err)
 		return
 	}

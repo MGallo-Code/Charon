@@ -68,6 +68,12 @@ type Config struct {
 	PasswordRequireUppercase bool
 	PasswordRequireDigit     bool
 	PasswordRequireSpecial   bool
+
+	// Google OAuth -- all three required together to enable Google sign-in.
+	// Leave GOOGLE_CLIENT_ID unset to disable Google OAuth entirely.
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
@@ -162,6 +168,18 @@ func LoadConfig() (*Config, error) {
 	cfg.PasswordRequireUppercase = envBool("PASSWORD_REQUIRE_UPPERCASE")
 	cfg.PasswordRequireDigit = envBool("PASSWORD_REQUIRE_DIGIT")
 	cfg.PasswordRequireSpecial = envBool("PASSWORD_REQUIRE_SPECIAL")
+
+	// Google OAuth -- optional; all three must be set together.
+	cfg.GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
+	cfg.GoogleClientSecret = os.Getenv("GOOGLE_CLIENT_SECRET")
+	cfg.GoogleRedirectURL = os.Getenv("GOOGLE_REDIRECT_URL")
+	if (cfg.GoogleClientID == "") != (cfg.GoogleClientSecret == "") ||
+		(cfg.GoogleClientID != "" && cfg.GoogleRedirectURL == "") {
+		slog.Warn("google oauth misconfigured: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URL must all be set; google sign-in disabled")
+		cfg.GoogleClientID = ""
+		cfg.GoogleClientSecret = ""
+		cfg.GoogleRedirectURL = ""
+	}
 
 	return cfg, nil
 }

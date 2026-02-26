@@ -16,6 +16,7 @@ import (
 	"github.com/MGallo-Code/charon/internal/auth"
 	"github.com/MGallo-Code/charon/internal/config"
 	"github.com/MGallo-Code/charon/internal/mail"
+	"github.com/MGallo-Code/charon/internal/oauth"
 	"github.com/MGallo-Code/charon/internal/store"
 
 	"github.com/go-chi/chi/v5"
@@ -116,6 +117,17 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		}
 	}
 
+	// Set up OAuth providers. Non-fatal -- missing/unreachable config disables the provider.
+	oauthProviders := map[string]oauth.Provider{}
+	if cfg.GoogleClientID != "" {
+		gp, err := oauth.NewGoogleProvider(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURL)
+		if err != nil {
+			slog.Error("google oauth setup failed, google sign-in disabled", "error", err)
+		} else {
+			oauthProviders["google"] = gp
+		}
+	}
+
 	// Create AuthHandler
 	h := auth.AuthHandler{
 		PS:                       ps,
@@ -154,6 +166,7 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 			RequireDigit:     cfg.PasswordRequireDigit,
 			RequireSpecial:   cfg.PasswordRequireSpecial,
 		},
+		OAuthProviders: oauthProviders,
 	}
 
 	// Bind listener; ":0" picks a free port (useful in tests).
@@ -237,6 +250,8 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	r.Use(middleware.Timeout(30 * time.Second))
 
 	r.Get("/health", h.CheckHealth)
+	r.Get("/oauth/{provider}", h.OAuthRedirect)
+	r.Get("/oauth/{provider}/callback", h.OAuthCallback)
 	r.Post("/register/email", h.RegisterByEmail)
 	r.Post("/login/email", h.LoginByEmail)
 	r.Post("/verify/email", h.VerifyEmail)
