@@ -5,6 +5,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -43,6 +44,13 @@ func logWarn(r *http.Request, msg string, args ...any) {
 // logError logs at error level with automatic request context.
 func logError(r *http.Request, msg string, args ...any) {
 	slog.Error(msg, append(reqAttrs(r), args...)...)
+}
+
+// marshalMeta encodes audit metadata to JSON, silently discarding encode errors.
+// Mirrors the non-fatal pattern used throughout audit log calls.
+func marshalMeta(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 // auditLog writes an audit event to the DB. Non-fatal -- logs on failure but never fails the request.

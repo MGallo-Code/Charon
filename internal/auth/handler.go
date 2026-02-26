@@ -267,11 +267,10 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 			// Duplicate email -- return same 201 as real registration (no enumeration).
 			// userID was generated above but never persisted; caller can't distinguish.
 			logInfo(r, "register failed", "reason", "duplicate_email", "email", email)
-			meta, _ := json.Marshal(struct {
+			h.auditLog(r, nil, "user.register_failed", marshalMeta(struct {
 				Email  string `json:"email"`
 				Reason string `json:"reason"`
-			}{email, "duplicate_email"})
-			h.auditLog(r, nil, "user.register_failed", meta)
+			}{email, "duplicate_email"}))
 		} else {
 			logError(r, "failed to create user", "error", err)
 			InternalServerError(w, r, err)
@@ -341,11 +340,10 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		_, _ = VerifyPassword(loginInput.Password, dummyPasswordHash())
 		if errors.Is(err, pgx.ErrNoRows) {
 			logInfo(r, "login failed", "reason", "user_not_found", "email", email)
-			meta, _ := json.Marshal(struct {
+			h.auditLog(r, nil, "user.login_failed", marshalMeta(struct {
 				Email  string `json:"email"`
 				Reason string `json:"reason"`
-			}{email, "user_not_found"})
-			h.auditLog(r, nil, "user.login_failed", meta)
+			}{email, "user_not_found"}))
 			Unauthorized(w, r, "invalid credentials")
 		} else {
 			logError(r, "failed to fetch user for login", "error", err)
@@ -368,10 +366,9 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	if !valid {
 		logInfo(r, "login failed", "reason", "wrong_password", "user_id", user.ID)
-		meta, _ := json.Marshal(struct {
+		h.auditLog(r, &user.ID, "user.login_failed", marshalMeta(struct {
 			Reason string `json:"reason"`
-		}{"wrong_password"})
-		h.auditLog(r, &user.ID, "user.login_failed", meta)
+		}{"wrong_password"}))
 		Unauthorized(w, r, "invalid credentials. If you need access, try resetting your password.")
 		return
 	}
@@ -379,10 +376,9 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	// Block login when email verification is required and not yet confirmed.
 	if h.RequireEmailVerification && user.EmailConfirmedAt == nil {
 		logInfo(r, "login failed", "reason", "email_not_verified", "user_id", user.ID)
-		meta, _ := json.Marshal(struct {
+		h.auditLog(r, &user.ID, "user.login_failed", marshalMeta(struct {
 			Reason string `json:"reason"`
-		}{"email_not_verified"})
-		h.auditLog(r, &user.ID, "user.login_failed", meta)
+		}{"email_not_verified"}))
 		Unauthorized(w, r, "email address not verified. Please check your inbox for a verification link.")
 		return
 	}
@@ -435,10 +431,9 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	SetSessionCookie(w, *token, expiresAt)
-	meta, _ := json.Marshal(struct {
+	h.auditLog(r, &user.ID, "user.login", marshalMeta(struct {
 		RememberMe bool `json:"remember_me"`
-	}{loginInput.RememberMe})
-	h.auditLog(r, &user.ID, "user.login", meta)
+	}{loginInput.RememberMe}))
 	logInfo(r, "user logged in successfully", "user_id", user.ID, "remember_me", loginInput.RememberMe)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -797,10 +792,9 @@ func (h *AuthHandler) sendVerificationEmail(r *http.Request, userID uuid.UUID, e
 		logWarn(r, "failed to send verification email", "error", err)
 		return
 	}
-	meta, _ := json.Marshal(struct {
+	h.auditLog(r, &userID, "user.email_verification_requested", marshalMeta(struct {
 		Trigger string `json:"trigger"`
-	}{trigger})
-	h.auditLog(r, &userID, "user.email_verification_requested", meta)
+	}{trigger}))
 }
 
 // ResendVerificationEmail handles POST /resend/verification-email -- re-sends the verification link.

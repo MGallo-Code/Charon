@@ -143,11 +143,11 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	SetSessionCookie(w, *sessionToken, expiresAt)
-	meta, _ := json.Marshal(struct {
+	providerName := provider.Name()
+	h.auditLog(r, &user.ID, "user.login", marshalMeta(struct {
 		Provider string `json:"provider"`
-	}{provider.Name()})
-	h.auditLog(r, &user.ID, "user.login", meta)
-	logInfo(r, "oauth user logged in", "user_id", user.ID, "provider", provider.Name())
+	}{providerName}))
+	logInfo(r, "oauth user logged in", "user_id", user.ID, "provider", providerName)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
