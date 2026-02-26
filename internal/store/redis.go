@@ -70,30 +70,16 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 		return fmt.Errorf("marshaling session: %w", err)
 	}
 
+	sessionKey := "session:" + tokenHash
+	userSetKey := "user_sessions:" + sessionData.UserID.String()
+	ttlDur := time.Duration(ttl) * time.Second
+
 	// Create pipeline to make sure atomic
 	pipe := s.rdb.TxPipeline()
-	// Initiate setting
-	pipe.Set(ctx,
-		/* Key */
-		fmt.Sprintf("session:%s", tokenHash),
-		/* Val */
-		cacheOut,
-		/* Exp time (s) */
-		time.Duration(ttl)*time.Second)
-
-	// Add session token hash to user's sessions group
-	pipe.SAdd(ctx,
-		/* Key */
-		fmt.Sprintf("user_sessions:%s", sessionData.UserID),
-		/* Val */
-		tokenHash)
-
-	// If TTL is larger than current group TTL, extend the TTL, otherwise do nothing
-	pipe.ExpireGT(ctx,
-		/* Key */
-		fmt.Sprintf("user_sessions:%s", sessionData.UserID),
-		/* TTL */
-		time.Duration(ttl)*time.Second)
+	pipe.Set(ctx, sessionKey, cacheOut, ttlDur)
+	pipe.SAdd(ctx, userSetKey, tokenHash)
+	// Extend user set TTL only if new TTL is larger -- preserves longer-lived sessions.
+	pipe.ExpireGT(ctx, userSetKey, ttlDur)
 
 	// Exec pipeline cmds, return any err
 	_, err = pipe.Exec(ctx)
@@ -106,7 +92,7 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 // GetSession retrieves cached session by token hash.
 // Returns ErrCacheMiss on a true Redis miss; other errors indicate infrastructure failures.
 func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedSession, error) {
-	raw, err := s.rdb.Get(ctx, fmt.Sprintf("session:%s", tokenHash)).Result()
+	raw, err := s.rdb.Get(ctx, "session:"+tokenHash).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, ErrCacheMiss
@@ -126,11 +112,8 @@ func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedS
 // DeleteSession removes session from cache and from user tracking set.
 func (s *RedisStore) DeleteSession(ctx context.Context, tokenHash string, userID uuid.UUID) error {
 	pipe := s.rdb.TxPipeline()
-
-	// Delete session data
-	pipe.Del(ctx, fmt.Sprintf("session:%s", tokenHash))
-	// Remove token hash from user's sessions set
-	pipe.SRem(ctx, fmt.Sprintf("user_sessions:%s", userID), tokenHash)
+	pipe.Del(ctx, "session:"+tokenHash)
+	pipe.SRem(ctx, "user_sessions:"+userID.String(), tokenHash)
 
 	_, err := pipe.Exec(ctx)
 	if err != nil {
@@ -142,7 +125,7 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tokenHash string, userID
 // DeleteAllUserSessions removes all cached sessions for given user.
 // Uses a Lua script so the read-and-delete is atomic -- no concurrent SetSession can slip through.
 func (s *RedisStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID) error {
-	setKey := fmt.Sprintf("user_sessions:%s", userID)
+	setKey := "user_sessions:" + userID.String()
 	if err := deleteAllSessionsScript.Run(ctx, s.rdb, []string{setKey}, "session:").Err(); err != nil {
 		return fmt.Errorf("deleting user sessions: %w", err)
 	}
@@ -200,8 +183,8 @@ func NewRedisRateLimiter(rdb *redis.Client) *RedisRateLimiter {
 // Returns nil if the attempt is allowed; non-nil error if locked out or threshold exceeded.
 func (r *RedisRateLimiter) Allow(ctx context.Context, key string, policy RateLimit) error {
 	keys := []string{
-		fmt.Sprintf("rl:lockout:%s", key),
-		fmt.Sprintf("rl:counter:%s", key),
+		"rl:lockout:" + key,
+		"rl:counter:" + key,
 	}
 	blocked, err := allowScript.Run(ctx, r.rdb, keys,
 		policy.MaxAttempts,
