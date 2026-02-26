@@ -255,8 +255,9 @@ func (s *PostgresStore) MarkTokenUsed(ctx context.Context, tokenHash []byte) err
 }
 
 // SetEmailConfirmedAt sets email_confirmed_at = NOW() for userID if not already confirmed.
+// Idempotent: 0 rows affected means email already confirmed -- not an error.
 func (s *PostgresStore) SetEmailConfirmedAt(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.pool.Exec(ctx, `
+	result, err := s.pool.Exec(ctx, `
 		UPDATE users
 		SET email_confirmed_at = NOW(),
 			updated_at = NOW()
@@ -265,6 +266,9 @@ func (s *PostgresStore) SetEmailConfirmedAt(ctx context.Context, userID uuid.UUI
 	`, userID)
 	if err != nil {
 		return fmt.Errorf("updating email_confirmed_at: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		// Already confirmed -- idempotent, not an error.
 	}
 	return nil
 }
