@@ -183,9 +183,19 @@ func LoadConfig() (*Config, error) {
 	cfg.GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
 	cfg.GoogleClientSecret = os.Getenv("GOOGLE_CLIENT_SECRET")
 	cfg.GoogleRedirectURL = os.Getenv("GOOGLE_REDIRECT_URL")
-	if (cfg.GoogleClientID == "") != (cfg.GoogleClientSecret == "") ||
-		(cfg.GoogleClientID != "" && cfg.GoogleRedirectURL == "") {
-		slog.Warn("google oauth misconfigured: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URL must all be set; google sign-in disabled")
+	hasID := cfg.GoogleClientID != ""
+	hasSecret := cfg.GoogleClientSecret != ""
+	hasURL := cfg.GoogleRedirectURL != ""
+	if (hasID || hasSecret || hasURL) && !(hasID && hasSecret && hasURL) {
+		if !hasID {
+			slog.Warn("google oauth disabled: GOOGLE_CLIENT_ID not set")
+		}
+		if !hasSecret {
+			slog.Warn("google oauth disabled: GOOGLE_CLIENT_SECRET not set")
+		}
+		if !hasURL {
+			slog.Warn("google oauth disabled: GOOGLE_REDIRECT_URL not set")
+		}
 		cfg.GoogleClientID = ""
 		cfg.GoogleClientSecret = ""
 		cfg.GoogleRedirectURL = ""
