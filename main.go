@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/MGallo-Code/charon/internal/auth"
+	"github.com/MGallo-Code/charon/internal/captcha"
 	"github.com/MGallo-Code/charon/internal/config"
 	"github.com/MGallo-Code/charon/internal/mail"
 	"github.com/MGallo-Code/charon/internal/oauth"
@@ -128,6 +129,18 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		}
 	}
 
+	// Set up CAPTCHA verifier. Nil when disabled -- handlers skip verification.
+	var cv auth.CaptchaVerifier
+	if cfg.CaptchaEnabled {
+		switch cfg.CaptchaProvider {
+		case "turnstile":
+			cv = captcha.NewTurnstileVerifier(cfg.CaptchaSecret)
+			slog.Info("captcha provider configured", "provider", "turnstile")
+		default:
+			slog.Warn("unknown captcha provider, captcha disabled", "provider", cfg.CaptchaProvider)
+		}
+	}
+
 	// Create AuthHandler
 	h := auth.AuthHandler{
 		PS:                       ps,
@@ -167,6 +180,13 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 			RequireSpecial:   cfg.PasswordRequireSpecial,
 		},
 		OAuthProviders: oauthProviders,
+		CV:             cv,
+		CaptchaCP: auth.CaptchaPolicies{
+			Register:             cfg.CaptchaRegister,
+			Login:                cfg.CaptchaLogin,
+			PasswordResetRequest: cfg.CaptchaPasswordResetRequest,
+			ResendVerification:   cfg.CaptchaResendVerification,
+		},
 	}
 
 	// Bind listener; ":0" picks a free port (useful in tests).

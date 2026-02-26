@@ -74,6 +74,16 @@ type Config struct {
 	GoogleClientID     string
 	GoogleClientSecret string
 	GoogleRedirectURL  string
+
+	// CAPTCHA -- leave SECURITY_CAPTCHA_ENABLED unset or false to disable entirely.
+	// CaptchaEnabled is reset to false at startup if CaptchaSecret is empty.
+	CaptchaEnabled              bool
+	CaptchaProvider             string
+	CaptchaSecret               string
+	CaptchaRegister             bool
+	CaptchaLogin                bool
+	CaptchaPasswordResetRequest bool
+	CaptchaResendVerification   bool
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
@@ -179,6 +189,19 @@ func LoadConfig() (*Config, error) {
 		cfg.GoogleClientID = ""
 		cfg.GoogleClientSecret = ""
 		cfg.GoogleRedirectURL = ""
+	}
+
+	// CAPTCHA -- optional; disabled when SECURITY_CAPTCHA_ENABLED is unset or secret is missing.
+	cfg.CaptchaEnabled = envBool("SECURITY_CAPTCHA_ENABLED")
+	cfg.CaptchaProvider = os.Getenv("SECURITY_CAPTCHA_PROVIDER")
+	cfg.CaptchaSecret = os.Getenv("SECURITY_CAPTCHA_SECRET")
+	cfg.CaptchaRegister = envBool("SECURITY_CAPTCHA_REGISTER")
+	cfg.CaptchaLogin = envBool("SECURITY_CAPTCHA_LOGIN")
+	cfg.CaptchaPasswordResetRequest = envBool("SECURITY_CAPTCHA_PASSWORD_RESET")
+	cfg.CaptchaResendVerification = envBool("SECURITY_CAPTCHA_RESEND_VERIFICATION")
+	if cfg.CaptchaEnabled && cfg.CaptchaSecret == "" {
+		slog.Warn("SECURITY_CAPTCHA_ENABLED=true but SECURITY_CAPTCHA_SECRET is not set: captcha disabled")
+		cfg.CaptchaEnabled = false
 	}
 
 	return cfg, nil

@@ -417,6 +417,16 @@ func (m *MockRateLimiter) Allow(_ context.Context, _ string, _ store.RateLimit) 
 	return m.AllowErr
 }
 
+// MockCaptchaVerifier implements auth.CaptchaVerifier for tests.
+// Set VerifyErr to inject a failure.
+type MockCaptchaVerifier struct {
+	VerifyErr error
+}
+
+func (m *MockCaptchaVerifier) Verify(_ context.Context, _, _ string) error {
+	return m.VerifyErr
+}
+
 // MockMailer implements mail.Mailer for tests.
 // Set *Err fields to inject send failures.
 // Last* fields capture the most recent call's arguments for each method.

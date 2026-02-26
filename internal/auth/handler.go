@@ -118,6 +118,13 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string, policy store.RateLimit) error
 }
 
+// CaptchaVerifier verifies a client-supplied CAPTCHA token.
+// Satisfied by *captcha.TurnstileVerifier -- defined here per Go convention.
+type CaptchaVerifier interface {
+	// Verify checks the token against the CAPTCHA provider. Returns nil on success.
+	Verify(ctx context.Context, token, remoteIP string) error
+}
+
 // RateLimitPolicies holds rate limit policies for all auth endpoints.
 // Configured via RATE_* env vars with defaults set in config.go.
 type RateLimitPolicies struct {
@@ -125,6 +132,15 @@ type RateLimitPolicies struct {
 	LoginEmail         store.RateLimit
 	PasswordReset      store.RateLimit
 	ResendVerification store.RateLimit
+}
+
+// CaptchaPolicies controls which endpoints require a verified CAPTCHA token.
+// Each field maps to one handler; false means the check is skipped for that endpoint.
+type CaptchaPolicies struct {
+	Register             bool
+	Login                bool
+	PasswordResetRequest bool
+	ResendVerification   bool
 }
 
 // dummyPasswordHash generates a live Argon2id hash at startup for timing attack mitigation.
@@ -142,6 +158,10 @@ type AuthHandler struct {
 	RL       RateLimiter
 	ML       mail.Mailer
 	Policies RateLimitPolicies
+
+	// CV is the CAPTCHA verifier. Nil disables all captcha checks.
+	CV        CaptchaVerifier
+	CaptchaCP CaptchaPolicies
 
 	// RequireEmailVerification blocks login until email_confirmed_at is set.
 	// Controlled by REQUIRE_EMAIL_VERIFICATION env var (default true).
@@ -191,8 +211,9 @@ func (h *AuthHandler) CheckHealth(w http.ResponseWriter, r *http.Request) {
 // Never reveals whether email already exists.
 func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 	var registerInput struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email        string `json:"email"`
+		Password     string `json:"password"`
+		CaptchaToken string `json:"captcha_token"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&registerInput); err != nil {
@@ -208,6 +229,10 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 
 	if failures := h.Policy.Validate(registerInput.Password); len(failures) > 0 {
 		BadRequest(w, r, strings.Join(failures, "; "))
+		return
+	}
+
+	if !h.checkCaptcha(w, r, registerInput.CaptchaToken, h.CaptchaCP.Register) {
 		return
 	}
 
@@ -268,9 +293,10 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 // Argon2id dummy-hash equalises timing when account doesn't exist.
 func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	var loginInput struct {
-		Email      string `json:"email"`
-		Password   string `json:"password"`
-		RememberMe bool   `json:"remember_me"` // extends session to 30d instead of 24h
+		Email        string `json:"email"`
+		Password     string `json:"password"`
+		RememberMe   bool   `json:"remember_me"` // extends session to 30d instead of 24h
+		CaptchaToken string `json:"captcha_token"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&loginInput); err != nil {
@@ -289,6 +315,10 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	if loginInput.Password == "" {
 		Unauthorized(w, r, "invalid credentials")
+		return
+	}
+
+	if !h.checkCaptcha(w, r, loginInput.CaptchaToken, h.CaptchaCP.Login) {
 		return
 	}
 
@@ -571,7 +601,8 @@ func (h *AuthHandler) PasswordChange(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	// Get email from req
 	var pwdResetInput struct {
-		Email string `json:"email"`
+		Email        string `json:"email"`
+		CaptchaToken string `json:"captcha_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&pwdResetInput); err != nil {
 		BadRequest(w, r, "invalid request")
@@ -583,6 +614,10 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	// Validate before rate-limit -- keeps garbage strings out of Redis keys.
 	if msg := ValidateEmail(email); msg != "" {
 		BadRequest(w, r, msg)
+		return
+	}
+
+	if !h.checkCaptcha(w, r, pwdResetInput.CaptchaToken, h.CaptchaCP.PasswordResetRequest) {
 		return
 	}
 
@@ -771,7 +806,8 @@ func (h *AuthHandler) sendVerificationEmail(r *http.Request, userID uuid.UUID, e
 // or is already confirmed (no enumeration).
 func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Email string `json:"email"`
+		Email        string `json:"email"`
+		CaptchaToken string `json:"captcha_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		logWarn(r, "failed to decode resend verification email input", "error", err)
@@ -787,6 +823,10 @@ func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Req
 	}
 
 	const resendMsg = "if that email is registered and unverified, a verification link has been sent"
+
+	if !h.checkCaptcha(w, r, input.CaptchaToken, h.CaptchaCP.ResendVerification) {
+		return
+	}
 
 	if err := h.RL.Allow(r.Context(), "resend:email:"+email, h.Policies.ResendVerification); err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
@@ -819,6 +859,20 @@ func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Req
 	// sendVerificationEmail handles its own logging and audit.
 	h.sendVerificationEmail(r, user.ID, *user.Email, "resend")
 	OK(w, resendMsg)
+}
+
+// checkCaptcha verifies the captcha token when CV is set and required is true.
+// Returns true to continue, false if verification failed (response already written).
+func (h *AuthHandler) checkCaptcha(w http.ResponseWriter, r *http.Request, token string, required bool) bool {
+	if h.CV == nil || !required {
+		return true
+	}
+	if err := h.CV.Verify(r.Context(), token, r.RemoteAddr); err != nil {
+		logWarn(r, "captcha verification failed", "error", err)
+		BadRequest(w, r, "captcha verification failed")
+		return false
+	}
+	return true
 }
 
 // VerifyEmail handles POST /verify/email -- consumes a single-use token from
