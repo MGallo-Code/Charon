@@ -23,21 +23,24 @@ import (
 // Use NewMockStore to seed users; or construct directly and set *Err fields for error-path tests.
 type MockStore struct {
 	// Error injection...zero value means no error
-	CheckHealthErr         error
-	CreateUserErr          error
-	GetUserByEmailErr      error
-	GetPwdHashByUserIDErr  error
-	CreateSessionErr       error
-	GetSessionErr          error
-	UpdateUserPasswordErr  error
-	DeleteSessionErr       error
-	DeleteAllSessionsErr   error
-	CreateTokenErr         error
-	GetTokenByHashErr      error
-	MarkTokenUsedErr       error
-	ConsumeTokenErr        error
-	SetEmailConfirmedAtErr error
-	WriteAuditLogErr       error
+	CheckHealthErr            error
+	CreateUserErr             error
+	GetUserByEmailErr         error
+	GetPwdHashByUserIDErr     error
+	CreateSessionErr          error
+	GetSessionErr             error
+	UpdateUserPasswordErr     error
+	DeleteSessionErr          error
+	DeleteAllSessionsErr      error
+	CreateTokenErr            error
+	GetTokenByHashErr         error
+	MarkTokenUsedErr          error
+	ConsumeTokenErr           error
+	SetEmailConfirmedAtErr    error
+	WriteAuditLogErr          error
+	GetUserByOAuthProviderErr error
+	CreateOAuthUserErr        error
+	LinkOAuthToUserErr        error
 
 	Users    map[string]*store.User    // keyed by email
 	Sessions map[string]*store.Session // keyed by string(tokenHash)
@@ -246,6 +249,57 @@ func (m *MockStore) DeleteAllUserSessions(_ context.Context, userID uuid.UUID) e
 	}
 	m.mu.Unlock()
 	return nil
+}
+
+func (m *MockStore) GetUserByOAuthProvider(_ context.Context, provider, providerID string) (*store.User, error) {
+	if m.GetUserByOAuthProviderErr != nil {
+		return nil, m.GetUserByOAuthProviderErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.Users {
+		if u.OAuthProvider != nil && *u.OAuthProvider == provider &&
+			u.OAuthProviderID != nil && *u.OAuthProviderID == providerID {
+			return u, nil
+		}
+	}
+	return nil, fmt.Errorf("fetching user by oauth provider: %w", pgx.ErrNoRows)
+}
+
+func (m *MockStore) CreateOAuthUser(_ context.Context, id uuid.UUID, email, provider, providerID string) error {
+	if m.CreateOAuthUserErr != nil {
+		return m.CreateOAuthUserErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	m.Users[email] = &store.User{
+		ID:               id,
+		Email:            &email,
+		OAuthProvider:    &provider,
+		OAuthProviderID:  &providerID,
+		EmailConfirmedAt: &now,
+	}
+	return nil
+}
+
+func (m *MockStore) LinkOAuthToUser(_ context.Context, userID uuid.UUID, provider, providerID string) error {
+	if m.LinkOAuthToUserErr != nil {
+		return m.LinkOAuthToUserErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.Users {
+		if u.ID == userID {
+			if u.OAuthProvider != nil {
+				return fmt.Errorf("linking oauth to user: %w", pgx.ErrNoRows)
+			}
+			u.OAuthProvider = &provider
+			u.OAuthProviderID = &providerID
+			return nil
+		}
+	}
+	return fmt.Errorf("linking oauth to user: %w", pgx.ErrNoRows)
 }
 
 // MockCache implements auth.SessionCache for tests.
