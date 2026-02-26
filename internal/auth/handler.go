@@ -222,7 +222,9 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if msg := ValidateEmail(registerInput.Email); msg != "" {
+	email := strings.ToLower(registerInput.Email)
+
+	if msg := ValidateEmail(email); msg != "" {
 		BadRequest(w, r, msg)
 		return
 	}
@@ -236,9 +238,9 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.RL.Allow(r.Context(), "register:email:"+registerInput.Email, h.Policies.RegisterEmail); err != nil {
+	if err := h.RL.Allow(r.Context(), "register:email:"+email, h.Policies.RegisterEmail); err != nil {
 		if errors.Is(err, store.ErrRateLimitExceeded) {
-			logInfo(r, "register failed", "reason", "rate_limited", "email", registerInput.Email)
+			logInfo(r, "register failed", "reason", "rate_limited", "email", email)
 			TooManyRequests(w)
 			return
 		}
@@ -258,17 +260,17 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.PS.CreateUserByEmail(r.Context(), userID, registerInput.Email, hashedPassword)
+	err = h.PS.CreateUserByEmail(r.Context(), userID, email, hashedPassword)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			// Duplicate email -- return same 201 as real registration (no enumeration).
 			// userID was generated above but never persisted; caller can't distinguish.
-			logInfo(r, "register failed", "reason", "duplicate_email", "email", registerInput.Email)
+			logInfo(r, "register failed", "reason", "duplicate_email", "email", email)
 			meta, _ := json.Marshal(struct {
 				Email  string `json:"email"`
 				Reason string `json:"reason"`
-			}{registerInput.Email, "duplicate_email"})
+			}{email, "duplicate_email"})
 			h.auditLog(r, nil, "user.register_failed", meta)
 		} else {
 			logError(r, "failed to create user", "error", err)
@@ -281,7 +283,7 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 
 		// Send verification email when required. Non-fatal -- user can request resend later.
 		if h.RequireEmailVerification {
-			h.sendVerificationEmail(r, userID, registerInput.Email, "registration")
+			h.sendVerificationEmail(r, userID, email, "registration")
 		}
 	}
 
