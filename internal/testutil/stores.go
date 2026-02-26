@@ -55,6 +55,7 @@ func NewMockStore(users ...*store.User) *MockStore {
 	ms := &MockStore{
 		Users:    make(map[string]*store.User),
 		Sessions: make(map[string]*store.Session),
+		Tokens:   make(map[string]*store.Token),
 	}
 	for _, u := range users {
 		if u.Email != nil {
@@ -169,9 +170,6 @@ func (m *MockStore) CreateToken(_ context.Context, id, userID uuid.UUID, tokenTy
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Tokens == nil {
-		m.Tokens = make(map[string]*store.Token)
-	}
 	m.Tokens[string(tokenHash)] = &store.Token{
 		ID:        id,
 		UserID:    userID,
