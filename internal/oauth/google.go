@@ -29,7 +29,7 @@ func NewGoogleProvider(ctx context.Context, clientID, clientSecret, redirectURL 
 			ClientSecret: clientSecret,
 			RedirectURL:  redirectURL,
 			Endpoint:     p.Endpoint(),
-			Scopes:       []string{oidc.ScopeOpenID, "email"},
+			Scopes:       []string{oidc.ScopeOpenID, "email", "profile"},
 		},
 		verifier: p.Verifier(&oidc.Config{ClientID: clientID}),
 	}, nil
@@ -67,13 +67,23 @@ func (p *GoogleProvider) Exchange(ctx context.Context, code, codeVerifier string
 	}
 
 	var c struct {
+		Sub           string `json:"sub"`
 		Email         string `json:"email"`
 		EmailVerified bool   `json:"email_verified"`
-		Sub           string `json:"sub"`
+		GivenName     string `json:"given_name"`
+		FamilyName    string `json:"family_name"`
+		Picture       string `json:"picture"`
 	}
 	if err := idToken.Claims(&c); err != nil {
 		return nil, fmt.Errorf("extracting id token claims: %w", err)
 	}
 
-	return &Claims{Sub: c.Sub, Email: c.Email, EmailVerified: c.EmailVerified}, nil
+	return &Claims{
+		Sub:           c.Sub,
+		Email:         c.Email,
+		EmailVerified: c.EmailVerified,
+		GivenName:     c.GivenName,
+		FamilyName:    c.FamilyName,
+		Picture:       c.Picture,
+	}, nil
 }

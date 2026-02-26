@@ -41,6 +41,7 @@ type MockStore struct {
 	GetUserByOAuthProviderErr error
 	CreateOAuthUserErr        error
 	LinkOAuthToUserErr        error
+	SetOAuthProfileErr        error
 
 	Users    map[string]*store.User    // keyed by email
 	Sessions map[string]*store.Session // keyed by string(tokenHash)
@@ -266,7 +267,7 @@ func (m *MockStore) GetUserByOAuthProvider(_ context.Context, provider, provider
 	return nil, fmt.Errorf("fetching user by oauth provider: %w", pgx.ErrNoRows)
 }
 
-func (m *MockStore) CreateOAuthUser(_ context.Context, id uuid.UUID, email, provider, providerID string) error {
+func (m *MockStore) CreateOAuthUser(_ context.Context, id uuid.UUID, email, provider, providerID string, firstName, lastName, avatarURL *string) error {
 	if m.CreateOAuthUserErr != nil {
 		return m.CreateOAuthUserErr
 	}
@@ -279,8 +280,35 @@ func (m *MockStore) CreateOAuthUser(_ context.Context, id uuid.UUID, email, prov
 		OAuthProvider:    &provider,
 		OAuthProviderID:  &providerID,
 		EmailConfirmedAt: &now,
+		FirstName:        firstName,
+		LastName:         lastName,
+		AvatarURL:        avatarURL,
 	}
 	return nil
+}
+
+func (m *MockStore) SetOAuthProfile(_ context.Context, userID uuid.UUID, firstName, lastName, avatarURL *string) error {
+	if m.SetOAuthProfileErr != nil {
+		return m.SetOAuthProfileErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.Users {
+		if u.ID == userID {
+			// COALESCE behavior: only write if currently nil.
+			if u.FirstName == nil {
+				u.FirstName = firstName
+			}
+			if u.LastName == nil {
+				u.LastName = lastName
+			}
+			if u.AvatarURL == nil {
+				u.AvatarURL = avatarURL
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("setting oauth profile: %w", pgx.ErrNoRows)
 }
 
 func (m *MockStore) LinkOAuthToUser(_ context.Context, userID uuid.UUID, provider, providerID string) error {

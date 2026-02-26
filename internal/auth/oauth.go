@@ -102,7 +102,7 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.findOrCreateOAuthUser(r, provider.Name(), claims.Sub, claims.Email)
+	user, err := h.findOrCreateOAuthUser(r, provider.Name(), claims)
 	if err != nil {
 		logError(r, "oauth callback: find or create user failed", "error", err)
 		InternalServerError(w, r, err)
@@ -157,12 +157,12 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}{user.ID.String(), base64.RawURLEncoding.EncodeToString(csrfToken[:])})
 }
 
-// findOrCreateOAuthUser looks up a user by (provider, providerID).
+// findOrCreateOAuthUser looks up a user by (provider, claims.Sub).
 // Falls back to email lookup if not found; links the OAuth identity to the existing account.
 // Creates a new OAuth user if neither lookup finds a match.
-func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider, providerID, email string) (*store.User, error) {
+func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, claims *oauth.Claims) (*store.User, error) {
 	// Returning user -- already has this OAuth identity.
-	user, err := h.PS.GetUserByOAuthProvider(r.Context(), provider, providerID)
+	user, err := h.PS.GetUserByOAuthProvider(r.Context(), provider, claims.Sub)
 	if err == nil {
 		return user, nil
 	}
@@ -171,7 +171,7 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider, providerI
 	}
 
 	// Existing email account -- link this OAuth identity.
-	existing, err := h.PS.GetUserByEmail(r.Context(), email)
+	existing, err := h.PS.GetUserByEmail(r.Context(), claims.Email)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("looking up user by email for oauth link: %w", err)
 	}
@@ -182,11 +182,17 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider, providerI
 				logWarn(r, "oauth: failed to confirm email on link", "error", confErr, "user_id", existing.ID)
 			}
 		}
-		if linkErr := h.PS.LinkOAuthToUser(r.Context(), existing.ID, provider, providerID); linkErr != nil {
+		if linkErr := h.PS.LinkOAuthToUser(r.Context(), existing.ID, provider, claims.Sub); linkErr != nil {
 			// Non-fatal: user may already have a different provider linked.
 			logWarn(r, "oauth: could not link identity to account", "error", linkErr, "user_id", existing.ID)
 		} else {
 			h.auditLog(r, &existing.ID, "user.oauth_linked", nil)
+		}
+		// Non-fatal: only fills NULL columns via COALESCE, won't overwrite existing profile data.
+		if profErr := h.PS.SetOAuthProfile(r.Context(), existing.ID,
+			strOrNil(claims.GivenName), strOrNil(claims.FamilyName), strOrNil(claims.Picture),
+		); profErr != nil {
+			logWarn(r, "oauth: could not update profile on link", "error", profErr, "user_id", existing.ID)
 		}
 		return existing, nil
 	}
@@ -196,12 +202,23 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider, providerI
 	if err != nil {
 		return nil, fmt.Errorf("generating user id: %w", err)
 	}
-	if err := h.PS.CreateOAuthUser(r.Context(), userID, email, provider, providerID); err != nil {
+	if err := h.PS.CreateOAuthUser(r.Context(), userID, claims.Email, provider, claims.Sub,
+		strOrNil(claims.GivenName), strOrNil(claims.FamilyName), strOrNil(claims.Picture),
+	); err != nil {
 		return nil, fmt.Errorf("creating oauth user: %w", err)
 	}
 	h.auditLog(r, &userID, "user.registered", nil)
 	logInfo(r, "oauth user created", "user_id", userID, "provider", provider)
 	return &store.User{ID: userID}, nil
+}
+
+// strOrNil converts an empty string to nil; non-empty strings are returned as a pointer.
+// Used to map optional OAuth profile fields to nullable DB columns.
+func strOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // oauthProvider reads the {provider} URL param and looks it up in OAuthProviders.

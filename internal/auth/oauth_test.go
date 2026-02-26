@@ -325,7 +325,7 @@ func TestFindOrCreateOAuthUser_ReturningUser(t *testing.T) {
 	})
 	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
 
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), provider, providerID, email)
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), provider, &oauth.Claims{Sub: providerID, Email: email})
 
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
@@ -346,7 +346,7 @@ func TestFindOrCreateOAuthUser_EmailLink_UnconfirmedEmail(t *testing.T) {
 	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email})
 	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
 
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", "google-sub-new", email)
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "google-sub-new", Email: email})
 
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
@@ -373,7 +373,7 @@ func TestFindOrCreateOAuthUser_EmailLink_AlreadyConfirmed(t *testing.T) {
 
 	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
 
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", "google-sub-confirmed", email)
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "google-sub-confirmed", Email: email})
 
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
@@ -396,7 +396,7 @@ func TestFindOrCreateOAuthUser_EmailLink_LinkError(t *testing.T) {
 
 	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
 
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", "google-sub-linkerr", email)
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "google-sub-linkerr", Email: email})
 
 	if err != nil {
 		t.Fatalf("link failure must be non-fatal: got error %v", err)
@@ -412,7 +412,7 @@ func TestFindOrCreateOAuthUser_NewUser(t *testing.T) {
 	ms := testutil.NewMockStore()
 	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
 
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", "google-sub-new-user", email)
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "google-sub-new-user", Email: email})
 
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
@@ -432,7 +432,7 @@ func TestFindOrCreateOAuthUser_OAuthLookupDBError(t *testing.T) {
 	ms.GetUserByOAuthProviderErr = errors.New("db error")
 	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
 
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", "sub", "a@example.com")
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "sub", Email: "a@example.com"})
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -448,7 +448,7 @@ func TestFindOrCreateOAuthUser_EmailLookupDBError(t *testing.T) {
 	ms.GetUserByEmailErr = errors.New("db error")
 	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
 
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", "sub", "a@example.com")
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "sub", Email: "a@example.com"})
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -464,12 +464,131 @@ func TestFindOrCreateOAuthUser_CreateOAuthUserError(t *testing.T) {
 	ms.CreateOAuthUserErr = errors.New("db error")
 	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
 
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", "sub", "a@example.com")
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "sub", Email: "a@example.com"})
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if user != nil {
 		t.Errorf("expected nil user, got %v", user)
+	}
+}
+
+// TestFindOrCreateOAuthUser_NewUser_SetsProfile verifies profile fields are stored for new OAuth users.
+func TestFindOrCreateOAuthUser_NewUser_SetsProfile(t *testing.T) {
+	ms := testutil.NewMockStore()
+	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
+
+	_, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
+		Sub: "sub-profile", Email: "profile@example.com", EmailVerified: true,
+		GivenName: "Jane", FamilyName: "Doe", Picture: "https://example.com/avatar.jpg",
+	})
+
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	u := ms.Users["profile@example.com"]
+	if u == nil {
+		t.Fatal("expected user in store")
+	}
+	if u.FirstName == nil || *u.FirstName != "Jane" {
+		t.Errorf("first_name: expected %q, got %v", "Jane", u.FirstName)
+	}
+	if u.LastName == nil || *u.LastName != "Doe" {
+		t.Errorf("last_name: expected %q, got %v", "Doe", u.LastName)
+	}
+	if u.AvatarURL == nil || *u.AvatarURL != "https://example.com/avatar.jpg" {
+		t.Errorf("avatar_url: expected %q, got %v", "https://example.com/avatar.jpg", u.AvatarURL)
+	}
+}
+
+// TestFindOrCreateOAuthUser_EmailLink_SetsProfileIfEmpty sets profile on a linked account with no profile yet.
+func TestFindOrCreateOAuthUser_EmailLink_SetsProfileIfEmpty(t *testing.T) {
+	email := "empty-profile@example.com"
+	userID, _ := uuid.NewV7()
+	now := time.Now()
+
+	// Existing user has no profile fields set.
+	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
+	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
+
+	_, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
+		Sub: "sub-fill-profile", Email: email, EmailVerified: true,
+		GivenName: "Alice", FamilyName: "Smith", Picture: "https://example.com/alice.jpg",
+	})
+
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	u := ms.Users[email]
+	if u.FirstName == nil || *u.FirstName != "Alice" {
+		t.Errorf("first_name: expected %q, got %v", "Alice", u.FirstName)
+	}
+	if u.LastName == nil || *u.LastName != "Smith" {
+		t.Errorf("last_name: expected %q, got %v", "Smith", u.LastName)
+	}
+	if u.AvatarURL == nil || *u.AvatarURL != "https://example.com/alice.jpg" {
+		t.Errorf("avatar_url: expected %q, got %v", "https://example.com/alice.jpg", u.AvatarURL)
+	}
+}
+
+// TestFindOrCreateOAuthUser_EmailLink_KeepsExistingProfile verifies COALESCE: existing profile fields
+// are not overwritten when OAuth provides different values.
+func TestFindOrCreateOAuthUser_EmailLink_KeepsExistingProfile(t *testing.T) {
+	email := "has-profile@example.com"
+	userID, _ := uuid.NewV7()
+	now := time.Now()
+	existingFirst := "Bob"
+	existingAvatar := "https://example.com/bob-original.jpg"
+
+	ms := testutil.NewMockStore(&store.User{
+		ID: userID, Email: &email, EmailConfirmedAt: &now,
+		FirstName: &existingFirst, AvatarURL: &existingAvatar,
+	})
+	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
+
+	_, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
+		Sub: "sub-keep-profile", Email: email, EmailVerified: true,
+		GivenName: "Robert", FamilyName: "Jones", Picture: "https://example.com/bob-new.jpg",
+	})
+
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	u := ms.Users[email]
+	// FirstName and AvatarURL were already set -- must not be overwritten.
+	if u.FirstName == nil || *u.FirstName != "Bob" {
+		t.Errorf("first_name: expected %q (original), got %v", "Bob", u.FirstName)
+	}
+	if u.AvatarURL == nil || *u.AvatarURL != "https://example.com/bob-original.jpg" {
+		t.Errorf("avatar_url: expected original URL, got %v", u.AvatarURL)
+	}
+	// LastName was nil -- should be filled in.
+	if u.LastName == nil || *u.LastName != "Jones" {
+		t.Errorf("last_name: expected %q (filled), got %v", "Jones", u.LastName)
+	}
+}
+
+// TestFindOrCreateOAuthUser_EmailLink_SetProfileError_NonFatal verifies SetOAuthProfile failure is non-fatal.
+func TestFindOrCreateOAuthUser_EmailLink_SetProfileError_NonFatal(t *testing.T) {
+	email := "profile-err@example.com"
+	userID, _ := uuid.NewV7()
+	now := time.Now()
+
+	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
+	ms.SetOAuthProfileErr = errors.New("db error")
+	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
+
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
+		Sub: "sub-prof-err", Email: email, EmailVerified: true,
+		GivenName: "Fail", FamilyName: "Case",
+	})
+
+	// SetOAuthProfile failure must not surface as a handler error.
+	if err != nil {
+		t.Fatalf("SetOAuthProfile error must be non-fatal: got %v", err)
+	}
+	if user.ID != userID {
+		t.Errorf("user ID: expected %v, got %v", userID, user.ID)
 	}
 }

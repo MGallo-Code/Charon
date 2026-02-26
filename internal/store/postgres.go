@@ -324,13 +324,14 @@ func (s *PostgresStore) GetUserByOAuthProvider(ctx context.Context, oauthProvide
 }
 
 // CreateOAuthUser inserts a new user authenticated via an OAuth provider.
-func (s *PostgresStore) CreateOAuthUser(ctx context.Context, id uuid.UUID, email, oauthProvider, oauthProviderID string) error {
+// firstName, lastName, avatarURL are optional; nil is stored as SQL NULL.
+func (s *PostgresStore) CreateOAuthUser(ctx context.Context, id uuid.UUID, email, oauthProvider, oauthProviderID string, firstName, lastName, avatarURL *string) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO users
-			(id, email, oauth_provider, oauth_provider_id, email_confirmed_at)
+			(id, email, oauth_provider, oauth_provider_id, email_confirmed_at, first_name, last_name, avatar_url)
 		VALUES
-			($1, $2, $3, $4, NOW())
-	`, id, email, oauthProvider, oauthProviderID)
+			($1, $2, $3, $4, NOW(), $5, $6, $7)
+	`, id, email, oauthProvider, oauthProviderID, firstName, lastName, avatarURL)
 	if err != nil {
 		return fmt.Errorf("creating oauth user: %w", err)
 	}
@@ -352,6 +353,23 @@ func (s *PostgresStore) LinkOAuthToUser(ctx context.Context, id uuid.UUID, oauth
 	}
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("linking oauth to not-found user: %w", pgx.ErrNoRows)
+	}
+	return nil
+}
+
+// SetOAuthProfile updates first_name, last_name, and avatar_url for a user using COALESCE --
+// only overwrites columns that are currently NULL. Safe to call on every OAuth login.
+func (s *PostgresStore) SetOAuthProfile(ctx context.Context, id uuid.UUID, firstName, lastName, avatarURL *string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE users
+		SET first_name = COALESCE(first_name, $2),
+			last_name = COALESCE(last_name, $3),
+			avatar_url = COALESCE(avatar_url, $4),
+			updated_at = NOW()
+		WHERE id = $1
+	`, id, firstName, lastName, avatarURL)
+	if err != nil {
+		return fmt.Errorf("setting oauth profile: %w", err)
 	}
 	return nil
 }
