@@ -145,17 +145,21 @@ const specialChars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 func (p PasswordPolicy) Validate(password string) []string {
 	var failures []string
 
+	if password == "" {
+		failures = append(failures, "No password provided")
+	}
+
 	if p.MinLength > 0 && utf8.RuneCountInString(password) < p.MinLength {
-		failures = append(failures, fmt.Sprintf("password must be at least %d characters", p.MinLength))
+		failures = append(failures, fmt.Sprintf("Password must be at least %d characters", p.MinLength))
 	}
 	if p.MaxLength > 0 && utf8.RuneCountInString(password) > p.MaxLength {
-		failures = append(failures, fmt.Sprintf("password must be at most %d characters", p.MaxLength))
+		failures = append(failures, fmt.Sprintf("Password must be at most %d characters", p.MaxLength))
 	}
 
 	var seenUpper, seenDigit, seenSpecial bool
 	for _, r := range password {
 		if unicode.IsControl(r) {
-			return []string{"password contains invalid characters"}
+			return []string{"Password contains invalid characters"}
 		}
 		switch {
 		case unicode.IsUpper(r):
@@ -168,13 +172,13 @@ func (p PasswordPolicy) Validate(password string) []string {
 	}
 
 	if p.RequireUppercase && !seenUpper {
-		failures = append(failures, "password must contain at least one uppercase letter")
+		failures = append(failures, "Password must contain at least one uppercase letter")
 	}
 	if p.RequireDigit && !seenDigit {
-		failures = append(failures, "password must contain at least one digit")
+		failures = append(failures, "Password must contain at least one digit")
 	}
 	if p.RequireSpecial && !seenSpecial {
-		failures = append(failures, "password must contain at least one special character")
+		failures = append(failures, "Password must contain at least one special character")
 	}
 
 	return failures
