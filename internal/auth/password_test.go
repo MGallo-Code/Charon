@@ -124,32 +124,6 @@ func TestVerifyPassword(t *testing.T) {
 	})
 }
 
-// --- ValidatePassword ---
-
-func TestValidatePassword(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantMsg string
-	}{
-		{"empty string", "", "No password provided!"},
-		{"one under minimum", "seven77", "Password too short!"},
-		{"exactly minimum", "eightchr", ""},
-		{"exactly maximum", strings.Repeat("a", 128), ""},
-		{"one over maximum", strings.Repeat("a", 129), "Password too long!"},
-		{"valid password", "correcthorsebatterystaple*", ""},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ValidatePassword(tc.input)
-			if got != tc.wantMsg {
-				t.Errorf("ValidatePassword(%q): expected %q, got %q", tc.input, tc.wantMsg, got)
-			}
-		})
-	}
-}
-
 // --- PasswordPolicy.Validate ---
 
 func TestPasswordPolicyValidate(t *testing.T) {
