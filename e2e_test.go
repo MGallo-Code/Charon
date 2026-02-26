@@ -37,12 +37,15 @@ func TestMain(m *testing.M) {
 		Port:        "0", // OS picks a free port
 		LogLevel:    slog.LevelWarn,
 		// Rate limit defaults -- must be non-zero or the Lua script gets invalid TTLs.
-		RateLoginEmailMax:     10,
-		RateLoginEmailWindow:  10 * time.Minute,
-		RateLoginEmailLockout: 15 * time.Minute,
-		RateResetMax:          3,
-		RateResetWindow:       time.Hour,
-		RateResetLockout:      time.Hour,
+		RateRegisterEmailMax:     5,
+		RateRegisterEmailWindow:  time.Hour,
+		RateRegisterEmailLockout: time.Hour,
+		RateLoginEmailMax:        10,
+		RateLoginEmailWindow:     10 * time.Minute,
+		RateLoginEmailLockout:    15 * time.Minute,
+		RateResetMax:             3,
+		RateResetWindow:          time.Hour,
+		RateResetLockout:         time.Hour,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -314,7 +317,7 @@ func TestE2E_FullRoundTrip_PasswordChange(t *testing.T) {
 	_, _ = e2eLogin(t, email, newPassword)
 }
 
-// TestE2E_PasswordReset_GenericResponse verifies that POST /password/reset returns 200
+// TestE2E_PasswordReset_GenericResponse verifies that POST /send/reset/password returns 200
 // for both existing and non-existent emails -- caller cannot distinguish the two.
 func TestE2E_PasswordReset_GenericResponse(t *testing.T) {
 	skipIfNoE2E(t)
@@ -323,10 +326,10 @@ func TestE2E_PasswordReset_GenericResponse(t *testing.T) {
 	e2eRegister(t, email, "resetpassword1")
 
 	// Non-existent email must return 200.
-	resp, err := http.Post(e2eServerURL+"/password/reset", "application/json",
+	resp, err := http.Post(e2eServerURL+"/send/reset/password", "application/json",
 		strings.NewReader(`{"email":"doesnotexist-e2e@example.com"}`))
 	if err != nil {
-		t.Fatalf("POST /password/reset (unknown): %v", err)
+		t.Fatalf("POST /send/reset/password (unknown): %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -334,10 +337,10 @@ func TestE2E_PasswordReset_GenericResponse(t *testing.T) {
 	}
 
 	// Registered email must also return 200.
-	resp, err = http.Post(e2eServerURL+"/password/reset", "application/json",
+	resp, err = http.Post(e2eServerURL+"/send/reset/password", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q}`, email)))
 	if err != nil {
-		t.Fatalf("POST /password/reset (registered): %v", err)
+		t.Fatalf("POST /send/reset/password (registered): %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -366,15 +369,15 @@ func TestE2E_PasswordConfirm_InvalidToken(t *testing.T) {
 func TestE2E_PasswordReset_RouteIsAccessible(t *testing.T) {
 	skipIfNoE2E(t)
 
-	// /password/reset returns 200 for any email (enumeration-safe).
-	resp, err := http.Post(e2eServerURL+"/password/reset", "application/json",
+	// /send/reset/password returns 200 for any email (enumeration-safe).
+	resp, err := http.Post(e2eServerURL+"/send/reset/password", "application/json",
 		strings.NewReader(`{"email":"doesnotexist@example.com"}`))
 	if err != nil {
-		t.Fatalf("POST /password/reset: %v", err)
+		t.Fatalf("POST /send/reset/password: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("/password/reset: expected 200, got %d", resp.StatusCode)
+		t.Errorf("/send/reset/password: expected 200, got %d", resp.StatusCode)
 	}
 
 	// /password/confirm returns 400 for a bad token (route mounted, validation runs).
@@ -420,15 +423,15 @@ func TestE2E_PasswordChange_DoesNotAffectOtherUser(t *testing.T) {
 	_, _ = e2eLogin(t, emailB, passwordB)
 }
 
-// e2eRequestPasswordReset calls POST /password/reset and returns the reset token
+// e2eRequestPasswordReset calls POST /send/reset/password and returns the reset token
 // captured by e2eMailer. Fatals if the request fails or no token is captured.
 func e2eRequestPasswordReset(t *testing.T, email string) string {
 	t.Helper()
 	e2eMailer.LastResetToken = "" // clear previous capture
-	resp, err := http.Post(e2eServerURL+"/password/reset", "application/json",
+	resp, err := http.Post(e2eServerURL+"/send/reset/password", "application/json",
 		strings.NewReader(fmt.Sprintf(`{"email":%q}`, email)))
 	if err != nil {
-		t.Fatalf("POST /password/reset: %v", err)
+		t.Fatalf("POST /send/reset/password: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

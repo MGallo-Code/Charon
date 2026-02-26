@@ -298,7 +298,7 @@ func TestSmoke_FullRoundTrip_LogoutAll(t *testing.T) {
 	t.Error("__Host-session not found in logout-all response")
 }
 
-// TestSmoke_PasswordReset_UnknownEmail verifies POST /password/reset returns 200
+// TestSmoke_PasswordReset_UnknownEmail verifies POST /send/reset/password returns 200
 // even when no account exists for the given email (enumeration-safe).
 func TestSmoke_PasswordReset_UnknownEmail(t *testing.T) {
 	hash, err := auth.HashPassword(smokePassword)
@@ -315,9 +315,9 @@ func TestSmoke_PasswordReset_UnknownEmail(t *testing.T) {
 	defer srv.Close()
 
 	payload := `{"email":"unknown@example.com"}`
-	resp, err := http.Post(srv.URL+"/password/reset", "application/json", strings.NewReader(payload))
+	resp, err := http.Post(srv.URL+"/send/reset/password", "application/json", strings.NewReader(payload))
 	if err != nil {
-		t.Fatalf("POST /password/reset: %v", err)
+		t.Fatalf("POST /send/reset/password: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -372,9 +372,9 @@ func TestSmoke_PasswordReset_FullRoundTrip(t *testing.T) {
 
 	// Step 1: Request password reset -- expect 200, mailer captures the token.
 	resetPayload := `{"email":"` + smokeEmail + `"}`
-	resetResp, err := http.Post(srv.URL+"/password/reset", "application/json", strings.NewReader(resetPayload))
+	resetResp, err := http.Post(srv.URL+"/send/reset/password", "application/json", strings.NewReader(resetPayload))
 	if err != nil {
-		t.Fatalf("POST /password/reset: %v", err)
+		t.Fatalf("POST /send/reset/password: %v", err)
 	}
 	resetResp.Body.Close()
 	if resetResp.StatusCode != http.StatusOK {

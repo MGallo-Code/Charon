@@ -236,8 +236,8 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	r.Post("/register/email", h.RegisterByEmail)
 	r.Post("/login/email", h.LoginByEmail)
 	r.Post("/verify/email", h.VerifyEmail)
-	r.Post("/resend/verification-email", h.ResendVerificationEmail)
-	r.Post("/password/reset", h.PasswordReset)
+	r.Post("/send/verify/email", h.ResendVerificationEmail)
+	r.Post("/send/reset/password", h.PasswordReset)
 	r.Post("/password/confirm", h.PasswordConfirm)
 
 	// Authentication required routes
