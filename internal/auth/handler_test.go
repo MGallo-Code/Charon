@@ -126,6 +126,22 @@ func assertSessionCookie(t *testing.T, w *httptest.ResponseRecorder) {
 	}
 }
 
+// assertTooManyRequests checks response is 429 JSON with "too many requests" error.
+func assertTooManyRequests(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("status: expected 429, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type: expected application/json, got %q", ct)
+	}
+	bodyBytes, _ := io.ReadAll(w.Body)
+	body := strings.TrimSuffix(string(bodyBytes), "\n")
+	if body != `{"error":"too many requests"}` {
+		t.Errorf("body: expected too many requests message, got %q", body)
+	}
+}
+
 // assertCreated checks response is 201 JSON with message field.
 func assertCreated(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
@@ -245,19 +261,36 @@ func TestRegisterByEmail(t *testing.T) {
 	// -- Happy path (201) --
 
 	t.Run("valid email and password returns Created", func(t *testing.T) {
-		// Mock store that returns nil, no err on User creation
-		h := AuthHandler{PS: &testutil.MockStore{}}
+		h := AuthHandler{
+			PS: &testutil.MockStore{},
+			RL: &testutil.MockRateLimiter{},
+		}
 
 		// Body w// valid email and password
 		body := strings.NewReader(`{"email":"valid@email.com","password":"validpassword123"}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
 		w := httptest.NewRecorder()
 
-		// Attempt register
 		h.RegisterByEmail(w, r)
 
-		// assert created
 		assertCreated(t, w)
+	})
+
+	// -- Rate limiting (429) --
+
+	t.Run("rate limited registration returns TooManyRequests", func(t *testing.T) {
+		h := AuthHandler{
+			PS: &testutil.MockStore{},
+			RL: &testutil.MockRateLimiter{AllowErr: store.ErrRateLimitExceeded},
+		}
+
+		body := strings.NewReader(`{"email":"valid@email.com","password":"validpassword123"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
+		w := httptest.NewRecorder()
+
+		h.RegisterByEmail(w, r)
+
+		assertTooManyRequests(t, w)
 	})
 
 	// -- Database errors (500) --
@@ -268,6 +301,7 @@ func TestRegisterByEmail(t *testing.T) {
 		pgErr := &pgconn.PgError{Code: "23505"}
 		h := AuthHandler{
 			PS: &testutil.MockStore{CreateUserErr: fmt.Errorf("creating user by email: %w", pgErr)},
+			RL: &testutil.MockRateLimiter{},
 		}
 
 		body := strings.NewReader(`{"email":"existing@email.com","password":"validpassword123"}`)
@@ -280,20 +314,17 @@ func TestRegisterByEmail(t *testing.T) {
 	})
 
 	t.Run("generic database error returns InternalServerError", func(t *testing.T) {
-		// Mock store that returns generic database error
 		h := AuthHandler{
 			PS: &testutil.MockStore{CreateUserErr: errors.New("database connection failed")},
+			RL: &testutil.MockRateLimiter{},
 		}
 
-		// Body w// valid email and password
 		body := strings.NewReader(`{"email":"test@email.com","password":"validpassword123"}`)
 		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
 		w := httptest.NewRecorder()
 
-		// Attempt register
 		h.RegisterByEmail(w, r)
 
-		// assert internal server error
 		assertInternalServerError(t, w)
 	})
 }

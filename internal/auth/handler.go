@@ -103,6 +103,7 @@ type RateLimiter interface {
 // RateLimitPolicies holds rate limit policies for all auth endpoints.
 // Configured via RATE_* env vars with defaults set in config.go.
 type RateLimitPolicies struct {
+	RegisterEmail      store.RateLimit
 	LoginEmail         store.RateLimit
 	PasswordReset      store.RateLimit
 	ResendVerification store.RateLimit
@@ -185,6 +186,16 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 
 	if failures := h.Policy.Validate(registerInput.Password); len(failures) > 0 {
 		BadRequest(w, r, strings.Join(failures, "; "))
+		return
+	}
+
+	if err := h.RL.Allow(r.Context(), "register:email:"+registerInput.Email, h.Policies.RegisterEmail); err != nil {
+		if errors.Is(err, store.ErrRateLimitExceeded) {
+			logInfo(r, "register failed", "reason", "rate_limited", "email", registerInput.Email)
+			TooManyRequests(w)
+			return
+		}
+		InternalServerError(w, r, err)
 		return
 	}
 

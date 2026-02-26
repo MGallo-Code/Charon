@@ -122,6 +122,11 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		SessionTTL:               cfg.SessionTTL,
 		SessionRememberMe:        cfg.SessionRememberMe,
 		Policies: auth.RateLimitPolicies{
+			RegisterEmail: store.RateLimit{
+				MaxAttempts: cfg.RateRegisterEmailMax,
+				Window:      cfg.RateRegisterEmailWindow,
+				LockoutTTL:  cfg.RateRegisterEmailLockout,
+			},
 			LoginEmail: store.RateLimit{
 				MaxAttempts: cfg.RateLoginEmailMax,
 				Window:      cfg.RateLoginEmailWindow,

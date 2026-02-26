@@ -29,6 +29,12 @@ type Config struct {
 	SMTPResetURLBase  string
 	SMTPVerifyURLBase string
 
+	// Rate limit policy for registration attempts per email.
+	// Defaults: max=5, window=1h, lockout=1h.
+	RateRegisterEmailMax     int
+	RateRegisterEmailWindow  time.Duration
+	RateRegisterEmailLockout time.Duration
+
 	// Rate limit policy for login attempts per email.
 	// Defaults: max=10, window=10m, lockout=15m.
 	RateLoginEmailMax     int
@@ -122,6 +128,11 @@ func LoadConfig() (*Config, error) {
 			return nil, fmt.Errorf("SMTP_VERIFY_URL must be set and start with https://")
 		}
 	}
+
+	// Rate limit: registration by email.
+	cfg.RateRegisterEmailMax = envInt("RATE_REGISTER_EMAIL_MAX", 5)
+	cfg.RateRegisterEmailWindow = envDuration("RATE_REGISTER_EMAIL_WINDOW", 1*time.Hour)
+	cfg.RateRegisterEmailLockout = envDuration("RATE_REGISTER_EMAIL_LOCKOUT", 1*time.Hour)
 
 	// Rate limit: login by email. All three fields required -- if any are missing or invalid,
 	// fall back to the default so a misconfigured env doesn't silently disable rate limiting.
