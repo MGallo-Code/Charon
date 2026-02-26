@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/MGallo-Code/charon/internal/oauth"
@@ -161,6 +162,8 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 // Falls back to email lookup if not found; links the OAuth identity to the existing account.
 // Creates a new OAuth user if neither lookup finds a match.
 func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, claims *oauth.Claims) (*store.User, error) {
+	email := strings.ToLower(claims.Email)
+
 	// Returning user -- already has this OAuth identity.
 	user, err := h.PS.GetUserByOAuthProvider(r.Context(), provider, claims.Sub)
 	if err == nil {
@@ -171,7 +174,7 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, cl
 	}
 
 	// Existing email account -- link this OAuth identity.
-	existing, err := h.PS.GetUserByEmail(r.Context(), claims.Email)
+	existing, err := h.PS.GetUserByEmail(r.Context(), email)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("looking up user by email for oauth link: %w", err)
 	}
@@ -202,7 +205,7 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, cl
 	if err != nil {
 		return nil, fmt.Errorf("generating user id: %w", err)
 	}
-	if err := h.PS.CreateOAuthUser(r.Context(), userID, claims.Email, provider, claims.Sub,
+	if err := h.PS.CreateOAuthUser(r.Context(), userID, email, provider, claims.Sub,
 		strOrNil(claims.GivenName), strOrNil(claims.FamilyName), strOrNil(claims.Picture),
 	); err != nil {
 		return nil, fmt.Errorf("creating oauth user: %w", err)
