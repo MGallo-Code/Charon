@@ -47,7 +47,7 @@ func newUser(t *testing.T, email, password string) (*store.User, string) {
 	return &store.User{
 		ID:           uuid.Must(uuid.NewV7()),
 		Email:        &e,
-		PasswordHash: hash,
+		PasswordHash: &hash,
 	}, email
 }
 

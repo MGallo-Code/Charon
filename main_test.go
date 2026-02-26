@@ -36,7 +36,7 @@ func newSmokeHandler(t *testing.T) *auth.AuthHandler {
 	user := &store.User{
 		ID:           uuid.Must(uuid.NewV7()),
 		Email:        &email,
-		PasswordHash: hash,
+		PasswordHash: &hash,
 	}
 	return &auth.AuthHandler{PS: testutil.NewMockStore(user), RS: testutil.NewMockCache(), RL: &testutil.MockRateLimiter{}}
 }
@@ -306,7 +306,7 @@ func TestSmoke_PasswordReset_UnknownEmail(t *testing.T) {
 		t.Fatalf("hashing test password: %v", err)
 	}
 	email := smokeEmail
-	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: hash}
+	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: &hash}
 	ms := testutil.NewMockStore(user)
 	mc := testutil.NewMockCache()
 	mailer := &testutil.MockMailer{}
@@ -334,7 +334,7 @@ func TestSmoke_PasswordConfirm_InvalidToken(t *testing.T) {
 		t.Fatalf("hashing test password: %v", err)
 	}
 	email := smokeEmail
-	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: hash}
+	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: &hash}
 	ms := testutil.NewMockStore(user)
 	mc := testutil.NewMockCache()
 	mailer := &testutil.MockMailer{}
@@ -362,7 +362,7 @@ func TestSmoke_PasswordReset_FullRoundTrip(t *testing.T) {
 		t.Fatalf("hashing test password: %v", err)
 	}
 	email := smokeEmail
-	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: hash}
+	user := &store.User{ID: uuid.Must(uuid.NewV7()), Email: &email, PasswordHash: &hash}
 	ms := testutil.NewMockStore(user)
 	mc := testutil.NewMockCache()
 	mailer := &testutil.MockMailer{}

@@ -300,7 +300,13 @@ func (h *AuthHandler) LoginByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid, err := VerifyPassword(loginInput.Password, user.PasswordHash)
+	if user.PasswordHash == nil {
+		// OAuth-only user -- equalize timing then reject.
+		_, _ = VerifyPassword(loginInput.Password, dummyPasswordHash())
+		Unauthorized(w, r, "invalid credentials. If you need access, try resetting your password.")
+		return
+	}
+	valid, err := VerifyPassword(loginInput.Password, *user.PasswordHash)
 	if err != nil {
 		logError(r, "password verification failed", "error", err)
 		InternalServerError(w, r, err)

@@ -148,8 +148,8 @@ func TestGetUserByEmail(t *testing.T) {
 		if user.Email == nil || *user.Email != email {
 			t.Errorf("email: expected %q, got %v", email, user.Email)
 		}
-		if user.PasswordHash != hash {
-			t.Errorf("password_hash: expected %q, got %q", hash, user.PasswordHash)
+		if user.PasswordHash == nil || *user.PasswordHash != hash {
+			t.Errorf("password_hash: expected %q, got %v", hash, user.PasswordHash)
 		}
 	})
 

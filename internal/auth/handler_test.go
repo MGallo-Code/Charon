@@ -339,7 +339,7 @@ func TestLoginByEmail(t *testing.T) {
 	testUser := &store.User{
 		ID:           uuid.Must(uuid.NewV7()),
 		Email:        &testEmail,
-		PasswordHash: testHash,
+		PasswordHash: &testHash,
 	}
 
 	// -- Input validation (400s) --
@@ -491,10 +491,11 @@ func TestLoginByEmail(t *testing.T) {
 	})
 
 	t.Run("malformed password hash returns InternalServerError", func(t *testing.T) {
+		badHash := "not-a-valid-argon2id-hash"
 		badUser := &store.User{
 			ID:           testUser.ID,
 			Email:        testUser.Email,
-			PasswordHash: "not-a-valid-argon2id-hash",
+			PasswordHash: &badHash,
 		}
 		h := AuthHandler{
 			PS: testutil.NewMockStore(badUser),
@@ -731,7 +732,7 @@ func TestPasswordChange(t *testing.T) {
 	testUser := &store.User{
 		ID:           uuid.Must(uuid.NewV7()),
 		Email:        &testEmail,
-		PasswordHash: testHash,
+		PasswordHash: &testHash,
 	}
 
 	// freshUser returns a new User with a freshly hashed testPassword.
@@ -739,7 +740,7 @@ func TestPasswordChange(t *testing.T) {
 	// in place; tests that reach UpdateUserPassword need their own copy.
 	freshUser := func() *store.User {
 		h, _ := HashPassword(testPassword)
-		return &store.User{ID: testUser.ID, Email: testUser.Email, PasswordHash: h}
+		return &store.User{ID: testUser.ID, Email: testUser.Email, PasswordHash: &h}
 	}
 
 	// -- Input validation (400s) --
@@ -1360,7 +1361,7 @@ func TestLoginByEmail_UnverifiedEmail(t *testing.T) {
 	unverifiedUser := &store.User{
 		ID:           uuid.Must(uuid.NewV7()),
 		Email:        &testEmail,
-		PasswordHash: testHash,
+		PasswordHash: &testHash,
 	}
 
 	t.Run("unverified email blocks login when RequireEmailVerification is true", func(t *testing.T) {
@@ -1676,7 +1677,7 @@ func TestPasswordChange_PolicyViolation(t *testing.T) {
 	testUser := &store.User{
 		ID:           uuid.Must(uuid.NewV7()),
 		Email:        &testEmail,
-		PasswordHash: currentHash,
+		PasswordHash: &currentHash,
 	}
 
 	// Policy requires uppercase; new password is all lowercase.

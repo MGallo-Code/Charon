@@ -85,7 +85,10 @@ func (m *MockStore) GetPwdHashByUserID(_ context.Context, id uuid.UUID) (string,
 	defer m.mu.Unlock()
 	for _, u := range m.Users {
 		if u.ID == id {
-			return u.PasswordHash, nil
+			if u.PasswordHash == nil {
+				return "", fmt.Errorf("fetching password hash by user id: %w", store.ErrNoPassword)
+			}
+			return *u.PasswordHash, nil
 		}
 	}
 	return "", fmt.Errorf("fetching password hash by user id: %w", pgx.ErrNoRows)
@@ -110,7 +113,7 @@ func (m *MockStore) UpdateUserPassword(_ context.Context, id uuid.UUID, password
 		return fmt.Errorf("updating user password: %w", pgx.ErrNoRows)
 	}
 	// Update pwd
-	u.PasswordHash = passwordHash
+	u.PasswordHash = &passwordHash
 	return nil
 }
 
