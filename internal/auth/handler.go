@@ -164,7 +164,7 @@ func (h *AuthHandler) CheckHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // RegisterByEmail handles POST /register — email + password signup.
-// Returns 201 with user_id, 400 for validation errors, 500 for server errors.
+// Returns 201 with generic message, 400 for validation errors, 500 for server errors.
 // Never reveals whether email already exists.
 func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 	var registerInput struct {
@@ -227,11 +227,7 @@ func (h *AuthHandler) RegisterByEmail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(struct {
-		UserID string `json:"user_id"`
-	}{userID.String()})
+	Created(w, "if that email is available, your account has been created")
 }
 
 // LoginByEmail handles POST /login — email + password authentication.

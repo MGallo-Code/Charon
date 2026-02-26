@@ -126,7 +126,7 @@ func assertSessionCookie(t *testing.T, w *httptest.ResponseRecorder) {
 	}
 }
 
-// assertCreated checks response is 201 JSON with user_id.
+// assertCreated checks response is 201 JSON with message field.
 func assertCreated(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
 	if w.Code != http.StatusCreated {
@@ -136,8 +136,8 @@ func assertCreated(t *testing.T, w *httptest.ResponseRecorder) {
 		t.Errorf("Content-Type: expected application/json, got %q", ct)
 	}
 	body, _ := io.ReadAll(w.Body)
-	if !strings.Contains(string(body), `"user_id"`) {
-		t.Errorf("body: expected user_id field, got %q", string(body))
+	if !strings.Contains(string(body), `"message"`) {
+		t.Errorf("body: expected message field, got %q", string(body))
 	}
 }
 

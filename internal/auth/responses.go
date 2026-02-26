@@ -68,6 +68,15 @@ func TooManyRequests(w http.ResponseWriter) {
 	}{"too many requests"})
 }
 
+// Created returns a 201 JSON response with the given message.
+func Created(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(struct {
+		Message string `json:"message"`
+	}{message})
+}
+
 // OK returns a 200 JSON response with the given message.
 func OK(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
