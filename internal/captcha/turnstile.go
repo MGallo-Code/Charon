@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const turnstileURL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+var turnstileURL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 // TurnstileVerifier verifies Cloudflare Turnstile tokens against the siteverify API.
 type TurnstileVerifier struct {

@@ -157,6 +157,55 @@ func assertCreated(t *testing.T, w *httptest.ResponseRecorder) {
 	}
 }
 
+// --- checkCaptcha ---
+
+func TestCheckCaptcha(t *testing.T) {
+	makeReq := func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/", nil)
+	}
+
+	t.Run("CV nil required false returns true (skip)", func(t *testing.T) {
+		h := AuthHandler{}
+		w := httptest.NewRecorder()
+		if !h.checkCaptcha(w, makeReq(), "token", false) {
+			t.Error("expected true (skip), got false")
+		}
+	})
+
+	t.Run("CV nil required true returns true (skip)", func(t *testing.T) {
+		h := AuthHandler{}
+		w := httptest.NewRecorder()
+		if !h.checkCaptcha(w, makeReq(), "token", true) {
+			t.Error("expected true (skip), got false")
+		}
+	})
+
+	t.Run("CV set required false returns true (skip)", func(t *testing.T) {
+		h := AuthHandler{CV: &testutil.MockCaptchaVerifier{VerifyErr: errors.New("would fail")}}
+		w := httptest.NewRecorder()
+		if !h.checkCaptcha(w, makeReq(), "token", false) {
+			t.Error("expected true (skip), got false")
+		}
+	})
+
+	t.Run("CV set required true verify ok returns true", func(t *testing.T) {
+		h := AuthHandler{CV: &testutil.MockCaptchaVerifier{}}
+		w := httptest.NewRecorder()
+		if !h.checkCaptcha(w, makeReq(), "token", true) {
+			t.Error("expected true, got false")
+		}
+	})
+
+	t.Run("CV set required true verify fails returns false and 400", func(t *testing.T) {
+		h := AuthHandler{CV: &testutil.MockCaptchaVerifier{VerifyErr: errors.New("rejected")}}
+		w := httptest.NewRecorder()
+		if h.checkCaptcha(w, makeReq(), "token", true) {
+			t.Error("expected false, got true")
+		}
+		assertBadRequest(t, w, "captcha verification failed")
+	})
+}
+
 // --- RegisterByEmail ---
 
 func TestRegisterByEmail(t *testing.T) {
@@ -291,6 +340,40 @@ func TestRegisterByEmail(t *testing.T) {
 		h.RegisterByEmail(w, r)
 
 		assertTooManyRequests(t, w)
+	})
+
+	// -- CAPTCHA (400) --
+
+	t.Run("captcha required, token rejected returns 400", func(t *testing.T) {
+		h := AuthHandler{
+			PS:        &testutil.MockStore{},
+			CV:        &testutil.MockCaptchaVerifier{VerifyErr: errors.New("bad token")},
+			CaptchaCP: CaptchaPolicies{Register: true},
+		}
+		body := strings.NewReader(`{"email":"test@example.com","password":"validpassword123","captcha_token":"bad"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
+		w := httptest.NewRecorder()
+
+		h.RegisterByEmail(w, r)
+
+		assertBadRequest(t, w, "captcha verification failed")
+	})
+
+	t.Run("captcha required, token valid proceeds past captcha check", func(t *testing.T) {
+		h := AuthHandler{
+			PS:        &testutil.MockStore{},
+			RL:        &testutil.MockRateLimiter{},
+			ML:        &testutil.MockMailer{},
+			CV:        &testutil.MockCaptchaVerifier{},
+			CaptchaCP: CaptchaPolicies{Register: true},
+		}
+		body := strings.NewReader(`{"email":"test@example.com","password":"validpassword123","captcha_token":"good"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/register", body)
+		w := httptest.NewRecorder()
+
+		h.RegisterByEmail(w, r)
+
+		assertCreated(t, w)
 	})
 
 	// -- Database errors (500) --
@@ -435,6 +518,42 @@ func TestLoginByEmail(t *testing.T) {
 		h.LoginByEmail(w, r)
 
 		assertInternalServerError(t, w)
+	})
+
+	// -- CAPTCHA (400) --
+
+	t.Run("captcha required, token rejected returns 400", func(t *testing.T) {
+		h := AuthHandler{
+			PS:        &testutil.MockStore{},
+			RS:        testutil.NewMockCache(),
+			CV:        &testutil.MockCaptchaVerifier{VerifyErr: errors.New("bad token")},
+			CaptchaCP: CaptchaPolicies{Login: true},
+		}
+		body := strings.NewReader(`{"email":"test@example.com","password":"password123","captcha_token":"bad"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
+		w := httptest.NewRecorder()
+
+		h.LoginByEmail(w, r)
+
+		assertBadRequest(t, w, "captcha verification failed")
+	})
+
+	t.Run("captcha required, token valid proceeds past captcha check", func(t *testing.T) {
+		// Empty store -- user not found returns 401, confirming captcha didn't block.
+		h := AuthHandler{
+			PS:        &testutil.MockStore{},
+			RS:        testutil.NewMockCache(),
+			RL:        &testutil.MockRateLimiter{},
+			CV:        &testutil.MockCaptchaVerifier{},
+			CaptchaCP: CaptchaPolicies{Login: true},
+		}
+		body := strings.NewReader(`{"email":"test@example.com","password":"password123","captcha_token":"good"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", body)
+		w := httptest.NewRecorder()
+
+		h.LoginByEmail(w, r)
+
+		assertUnauthorized(t, w, "invalid credentials")
 	})
 
 	// -- Authentication failures (401s) --
@@ -1050,6 +1169,40 @@ func TestPasswordReset(t *testing.T) {
 		}
 	})
 
+	// -- CAPTCHA (400) --
+
+	t.Run("captcha required, token rejected returns 400", func(t *testing.T) {
+		h := AuthHandler{
+			PS:        testutil.NewMockStore(existingUser),
+			ML:        &testutil.MockMailer{},
+			CV:        &testutil.MockCaptchaVerifier{VerifyErr: errors.New("bad token")},
+			CaptchaCP: CaptchaPolicies{PasswordResetRequest: true},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader(`{"email":"user@example.com","captcha_token":"bad"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		assertBadRequest(t, w, "captcha verification failed")
+	})
+
+	t.Run("captcha required, token valid proceeds past captcha check", func(t *testing.T) {
+		// Empty store -- user not found returns generic 200, confirming captcha didn't block.
+		h := AuthHandler{
+			PS:        testutil.NewMockStore(),
+			RL:        &testutil.MockRateLimiter{},
+			ML:        &testutil.MockMailer{},
+			CV:        &testutil.MockCaptchaVerifier{},
+			CaptchaCP: CaptchaPolicies{PasswordResetRequest: true},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/reset", strings.NewReader(`{"email":"nobody@example.com","captcha_token":"good"}`))
+		w := httptest.NewRecorder()
+
+		h.PasswordReset(w, r)
+
+		assertGenericResetResponse(t, w)
+	})
+
 	t.Run("CreateToken failure returns generic 200 (no enumeration)", func(t *testing.T) {
 		h := AuthHandler{
 			PS: &testutil.MockStore{
@@ -1571,6 +1724,27 @@ func TestResendVerificationEmail(t *testing.T) {
 		if w.Code != http.StatusTooManyRequests {
 			t.Errorf("status: expected 429, got %d", w.Code)
 		}
+	})
+
+	// -- CAPTCHA (400) --
+
+	t.Run("captcha required, token rejected returns 400", func(t *testing.T) {
+		h := baseHandler(testutil.NewMockStore(unverifiedUser))
+		h.CV = &testutil.MockCaptchaVerifier{VerifyErr: errors.New("bad token")}
+		h.CaptchaCP = CaptchaPolicies{ResendVerification: true}
+		w := httptest.NewRecorder()
+		h.ResendVerificationEmail(w, resendReq(`{"email":"user@example.com","captcha_token":"bad"}`))
+		assertBadRequest(t, w, "captcha verification failed")
+	})
+
+	t.Run("captcha required, token valid proceeds past captcha check", func(t *testing.T) {
+		// Empty store -- user not found returns generic 200, confirming captcha didn't block.
+		h := baseHandler(testutil.NewMockStore())
+		h.CV = &testutil.MockCaptchaVerifier{}
+		h.CaptchaCP = CaptchaPolicies{ResendVerification: true}
+		w := httptest.NewRecorder()
+		h.ResendVerificationEmail(w, resendReq(`{"email":"nobody@example.com","captcha_token":"good"}`))
+		assertGenericResendResponse(t, w)
 	})
 
 	t.Run("happy path: unverified user gets email, returns generic 200", func(t *testing.T) {
