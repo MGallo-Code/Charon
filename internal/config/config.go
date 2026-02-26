@@ -52,8 +52,8 @@ type Config struct {
 	RequireEmailVerification bool
 
 	// Session TTLs. Defaults: 24h standard, 720h (30d) remember-me.
-	SessionTTL         time.Duration
-	SessionRememberMe  time.Duration
+	SessionTTL        time.Duration
+	SessionRememberMe time.Duration
 
 	// Password complexity policy. All optional -- zero values are permissive.
 	// Passed to auth.PasswordPolicy in main.go.
@@ -106,9 +106,6 @@ func LoadConfig() (*Config, error) {
 	// SMTP -- all optional; empty Host means no email sending (NopMailer).
 	cfg.SMTPHost = os.Getenv("SMTP_HOST")
 	cfg.SMTPPort = os.Getenv("SMTP_PORT")
-	if cfg.SMTPPort == "" {
-		cfg.SMTPPort = "587"
-	}
 	cfg.SMTPUsername = os.Getenv("SMTP_USERNAME")
 	cfg.SMTPPassword = os.Getenv("SMTP_PASSWORD")
 	cfg.SMTPFromAddress = os.Getenv("SMTP_FROM")
