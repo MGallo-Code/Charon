@@ -21,6 +21,10 @@ var ErrNoPassword = errors.New("user has no password")
 // Callers use errors.Is to distinguish a true miss from a Redis infrastructure failure.
 var ErrCacheMiss = errors.New("cache miss")
 
+// ErrCacheDisabled is returned by NoopSessionCache.CheckHealth when Redis is not configured.
+// Callers use errors.Is to distinguish "not configured" from a real infrastructure failure.
+var ErrCacheDisabled = errors.New("cache disabled")
+
 // User represents a row in the users table.
 // Nullable columns are pointers — nil means SQL NULL.
 type User struct {

@@ -199,3 +199,52 @@ func (r *RedisRateLimiter) Allow(ctx context.Context, key string, policy RateLim
 	}
 	return nil
 }
+
+// NoopSessionCache satisfies the auth.SessionCache interface when Redis is not configured.
+// GetSession always returns ErrCacheMiss, driving every validation through Postgres.
+// All write operations are no-ops. CheckHealth returns ErrCacheDisabled.
+type NoopSessionCache struct{}
+
+// GetSession always returns ErrCacheMiss -- triggers the Postgres fallback in RequireAuth.
+func (n *NoopSessionCache) GetSession(_ context.Context, _ string) (*CachedSession, error) {
+	return nil, ErrCacheMiss
+}
+
+// SetSession is a no-op -- Postgres is the durable store; nothing to cache without Redis.
+func (n *NoopSessionCache) SetSession(_ context.Context, _ string, _ Session, _ int) error {
+	return nil
+}
+
+// DeleteSession is a no-op -- no cache entries exist without Redis.
+func (n *NoopSessionCache) DeleteSession(_ context.Context, _ string, _ uuid.UUID) error {
+	return nil
+}
+
+// DeleteAllUserSessions is a no-op -- no cache entries exist without Redis.
+func (n *NoopSessionCache) DeleteAllUserSessions(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
+// CheckHealth returns ErrCacheDisabled -- signals /health that Redis is intentionally absent.
+func (n *NoopSessionCache) CheckHealth(_ context.Context) error {
+	return ErrCacheDisabled
+}
+
+// NewNoopSessionCache returns a NoopSessionCache for use when REDIS_URL is not set.
+func NewNoopSessionCache() *NoopSessionCache {
+	return &NoopSessionCache{}
+}
+
+// NoopRateLimiter satisfies the auth.RateLimiter interface when Redis is not configured.
+// Allow always returns nil -- all requests are permitted without tracking.
+type NoopRateLimiter struct{}
+
+// Allow always permits the request; rate limiting is unavailable without Redis.
+func (n *NoopRateLimiter) Allow(_ context.Context, _ string, _ RateLimit) error {
+	return nil
+}
+
+// NewNoopRateLimiter returns a NoopRateLimiter for use when REDIS_URL is not set.
+func NewNoopRateLimiter() *NoopRateLimiter {
+	return &NoopRateLimiter{}
+}
