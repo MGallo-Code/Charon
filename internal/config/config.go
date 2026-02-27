@@ -87,7 +87,7 @@ type Config struct {
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
-// Returns an error if required variables (DATABASE_URL, REDIS_URL) are missing.
+// Returns an error if DATABASE_URL is missing. REDIS_URL is optional -- empty disables Redis.
 func LoadConfig() (*Config, error) {
 	// Create config obj
 	cfg := &Config{}
@@ -98,11 +98,8 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
-	// Attempt to get redis url, if missing, err
+	// Optional -- empty disables Redis (sessions from Postgres, rate limiting inactive).
 	cfg.RedisURL = os.Getenv("REDIS_URL")
-	if cfg.RedisURL == "" {
-		return nil, fmt.Errorf("REDIS_URL is required")
-	}
 
 	// Attempt to get port num, default to 7865
 	cfg.Port = os.Getenv("PORT")

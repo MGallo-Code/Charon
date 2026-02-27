@@ -41,13 +41,16 @@ func TestLoadConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("errors when REDIS_URL is missing", func(t *testing.T) {
+	t.Run("succeeds when REDIS_URL is missing", func(t *testing.T) {
 		t.Setenv("DATABASE_URL", "postgres://localhost/charon")
 		t.Setenv("REDIS_URL", "")
 
-		_, err := LoadConfig()
-		if err == nil {
-			t.Fatal("expected error for missing REDIS_URL, got nil")
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("expected no error for missing REDIS_URL, got: %v", err)
+		}
+		if cfg.RedisURL != "" {
+			t.Fatalf("expected empty RedisURL, got %q", cfg.RedisURL)
 		}
 	})
 

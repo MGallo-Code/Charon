@@ -186,8 +186,12 @@ func (h *AuthHandler) CheckHealth(w http.ResponseWriter, r *http.Request) {
 	postgresStatus := "ok"
 
 	if err := h.RS.CheckHealth(r.Context()); err != nil {
-		logError(r, "redis health check failed", "error", err)
-		redisStatus = "error"
+		if errors.Is(err, store.ErrCacheDisabled) {
+			redisStatus = "disabled"
+		} else {
+			logError(r, "redis health check failed", "error", err)
+			redisStatus = "error"
+		}
 	}
 	if err := h.PS.CheckHealth(r.Context()); err != nil {
 		logError(r, "postgres health check failed", "error", err)

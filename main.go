@@ -52,7 +52,7 @@ func main() {
 	defer stop()
 
 	// run() is a separate func so deferred closes (ps, rs) always execute before os.Exit.
-	// Passing nil for ml, run() builds the real mailer from config after Redis is ready.
+	// Passing nil for ml, run() builds the real mailer from config.
 	if err := run(ctx, cfg, nil, nil); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -65,10 +65,6 @@ func main() {
 // If ready is non-nil, the server's base URL is sent on it once the listener is bound.
 // If ml is nil, NopMailer is used.
 func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.Mailer) error {
-	// Warn early if any rate limit policy has zero Window or LockoutTTL.
-	// Zero durations cause cryptic Redis Lua errors at request time.
-	cfg.WarnIfMisconfigured()
-
 	// Create new postgres store, return errors if any
 	ps, err := store.NewPostgresStore(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -86,35 +82,47 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	// Create shared Redis client; all Redis structs share one connection pool.
-	rdb, err := store.NewRedisClient(ctx, cfg.RedisURL)
-	if err != nil {
-		return fmt.Errorf("failed to set up redis client: %w", err)
+	// Redis is optional. When REDIS_URL is unset: sessions served from Postgres,
+	// rate limiting disabled, mail sent synchronously without a retry queue.
+	var (
+		rs       auth.SessionCache = store.NewNoopSessionCache()
+		rl       auth.RateLimiter  = store.NewNoopRateLimiter()
+		hasRedis bool
+	)
+	smtpCfg := mail.SMTPConfig{
+		Host:          cfg.SMTPHost,
+		Port:          cfg.SMTPPort,
+		Username:      cfg.SMTPUsername,
+		Password:      cfg.SMTPPassword,
+		FromAddress:   cfg.SMTPFromAddress,
+		ResetURLBase:  cfg.SMTPResetURLBase,
+		VerifyURLBase: cfg.SMTPVerifyURLBase,
 	}
-	defer rdb.Close()
-
-	rs := store.NewRedisStore(rdb)
-	rl := store.NewRedisRateLimiter(rdb)
-
-	// Build production mailer when not injected by tests.
-	// NopMailer is used when SMTP_HOST is unset - log a warning so misconfiguration is visible.
-	if ml == nil {
-		if cfg.SMTPHost == "" {
-			slog.Warn("SMTP not configured: all outbound email is disabled (set SMTP_HOST to enable)")
-			ml = &mail.NopMailer{}
-		} else {
-			smtp := mail.NewSMTPMailer(mail.SMTPConfig{
-				Host:          cfg.SMTPHost,
-				Port:          cfg.SMTPPort,
-				Username:      cfg.SMTPUsername,
-				Password:      cfg.SMTPPassword,
-				FromAddress:   cfg.SMTPFromAddress,
-				ResetURLBase:  cfg.SMTPResetURLBase,
-				VerifyURLBase: cfg.SMTPVerifyURLBase,
-			})
-			qm := mail.NewQueuedMailer(smtp, rdb, mail.DefaultMaxQueueSize)
+	if cfg.RedisURL != "" {
+		// Rate limit policy zeros only matter when Redis is active.
+		cfg.WarnIfMisconfigured()
+		rdb, err := store.NewRedisClient(ctx, cfg.RedisURL)
+		if err != nil {
+			return fmt.Errorf("failed to set up redis client: %w", err)
+		}
+		defer rdb.Close()
+		rs = store.NewRedisStore(rdb)
+		rl = store.NewRedisRateLimiter(rdb)
+		hasRedis = true
+		// QueuedMailer requires Redis for its queue backend; only created when both are available.
+		if ml == nil && cfg.SMTPHost != "" {
+			qm := mail.NewQueuedMailer(mail.NewSMTPMailer(smtpCfg), rdb, mail.DefaultMaxQueueSize)
 			go qm.StartWorker(ctx)
 			ml = qm
+		}
+	}
+
+	// Build remaining mailer: no Redis path, test-injected nil with no Redis, or no SMTP.
+	if ml == nil {
+		if cfg.SMTPHost != "" {
+			ml = mail.NewSMTPMailer(smtpCfg) // synchronous -- no retry queue without Redis
+		} else {
+			ml = &mail.NopMailer{}
 		}
 	}
 
@@ -135,7 +143,6 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		switch cfg.CaptchaProvider {
 		case "turnstile":
 			cv = captcha.NewTurnstileVerifier(cfg.CaptchaSecret)
-			slog.Info("captcha provider configured", "provider", "turnstile")
 		default:
 			slog.Warn("unknown captcha provider, captcha disabled", "provider", cfg.CaptchaProvider)
 		}
@@ -188,6 +195,8 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 			ResendVerification:   cfg.CaptchaResendVerification,
 		},
 	}
+
+	logStartupSummary(hasRedis, cfg.SMTPHost != "", cv != nil, oauthProviders, cfg.RequireEmailVerification)
 
 	// Bind listener; ":0" picks a free port (useful in tests).
 	ln, err := net.Listen("tcp", ":"+cfg.Port)
@@ -291,4 +300,46 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	})
 
 	return r
+}
+
+// logStartupSummary logs one line per subsystem so operators can verify configuration at a glance.
+// Called once after all features are wired, before the listener binds.
+func logStartupSummary(hasRedis, hasSMTP, hasCaptcha bool, oauthProviders map[string]oauth.Provider, requireEmailVerification bool) {
+	if hasRedis {
+		slog.Info("redis enabled — session cache and rate limiting active")
+	} else {
+		slog.Warn("redis disabled — sessions served from postgres, rate limiting inactive")
+	}
+
+	if hasSMTP {
+		if hasRedis {
+			slog.Info("smtp enabled", "mode", "queued")
+		} else {
+			slog.Info("smtp enabled", "mode", "synchronous")
+		}
+	} else {
+		slog.Warn("smtp disabled — email features unavailable")
+	}
+
+	if len(oauthProviders) > 0 {
+		names := make([]string, 0, len(oauthProviders))
+		for k := range oauthProviders {
+			names = append(names, k)
+		}
+		slog.Info("oauth enabled", "providers", names)
+	} else {
+		slog.Info("oauth disabled")
+	}
+
+	if hasCaptcha {
+		slog.Info("captcha enabled")
+	} else {
+		slog.Info("captcha disabled")
+	}
+
+	if requireEmailVerification {
+		slog.Info("email verification required")
+	} else {
+		slog.Warn("email verification disabled — any registered email can log in")
+	}
 }
