@@ -111,11 +111,7 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	user, err := h.findOrCreateOAuthUser(r, provider.Name(), claims)
 	if errors.Is(err, ErrOAuthLinkRequired) {
 		logInfo(r, "oauth link confirmation sent", "provider", provider.Name())
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(struct {
-			Action string `json:"action"`
-		}{"link_confirmation_sent"})
+		OK(w, "link_confirmation_sent")
 		return
 	}
 	if err != nil {

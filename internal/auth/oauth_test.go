@@ -658,13 +658,13 @@ func TestOAuthCallback_LinkRequired(t *testing.T) {
 		t.Fatalf("status: expected 200, got %d", w.Code)
 	}
 	var resp struct {
-		Action string `json:"action"`
+		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Action != "link_confirmation_sent" {
-		t.Errorf("action: expected %q, got %q", "link_confirmation_sent", resp.Action)
+	if resp.Message != "link_confirmation_sent" {
+		t.Errorf("message: expected %q, got %q", "link_confirmation_sent", resp.Message)
 	}
 	// No session cookie should be issued.
 	for _, c := range w.Result().Cookies() {
