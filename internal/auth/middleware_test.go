@@ -274,4 +274,36 @@ func TestRequireAuth(t *testing.T) {
 			t.Errorf("csrfToken: expected %x, got %x (ok=%v)", wantCSRF, cap.csrfToken, cap.csrfTokenOK)
 		}
 	})
+
+	t.Run("tombstoned session returns Unauthorized without Postgres fallback", func(t *testing.T) {
+		cookie, _, redisKey := sessionFixture()
+
+		// Mark key as tombstoned in cache.
+		mc := testutil.NewMockCache()
+		mc.Tombstones[redisKey] = true
+
+		// Postgres has a valid session -- it must never be reached.
+		ms := &testutil.MockStore{
+			Sessions: map[string]*store.Session{
+				"any": {ExpiresAt: time.Now().Add(time.Hour)},
+			},
+		}
+		h := &AuthHandler{PS: ms, RS: mc}
+		cap := &contextCapture{}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		addSessionCookie(r, cookie)
+
+		h.RequireAuth(capturingHandler(cap)).ServeHTTP(w, r)
+
+		assertUnauthorized(t, w, "unauthorized")
+		if cap.called {
+			t.Error("next handler should not have been called")
+		}
+		// Postgres must not have been queried -- GetSessionErr being nil with no session
+		// hit means the fallback was skipped entirely.
+		if ms.GetSessionErr != nil {
+			t.Error("expected no Postgres lookup for tombstoned session")
+		}
+	})
 }
