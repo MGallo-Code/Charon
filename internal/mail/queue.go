@@ -7,9 +7,14 @@ package mail
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -47,14 +52,58 @@ type EmailJob struct {
 type QueuedMailer struct {
 	inner        Mailer
 	rdb          *redis.Client
-	maxQueueSize int64 // 0 = unlimited
+	maxQueueSize int64  // 0 = unlimited
+	encKey       []byte // AES-256-GCM key; nil disables encryption
 }
 
 // NewQueuedMailer wraps inner with a Redis-backed async queue.
 // inner handles actual SMTP sending; rdb is the shared Redis client.
 // maxSize caps the queue length (0 = unlimited); use DefaultMaxQueueSize for production.
-func NewQueuedMailer(inner Mailer, rdb *redis.Client, maxSize int64) *QueuedMailer {
-	return &QueuedMailer{inner: inner, rdb: rdb, maxQueueSize: maxSize}
+// encKey is a 32-byte AES-256 key used to encrypt tokens at rest in Redis; nil disables encryption.
+func NewQueuedMailer(inner Mailer, rdb *redis.Client, maxSize int64, encKey []byte) *QueuedMailer {
+	return &QueuedMailer{inner: inner, rdb: rdb, maxQueueSize: maxSize, encKey: encKey}
+}
+
+// encryptToken encrypts plaintext with AES-256-GCM using key.
+// Returns nonce || ciphertext; nonce is 12 random bytes prepended.
+func encryptToken(key, plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("creating AES cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("creating GCM: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize()) // 12 bytes for standard GCM
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("generating nonce: %w", err)
+	}
+	// Seal appends ciphertext+tag after nonce; result is nonce || ciphertext || tag.
+	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// decryptToken decrypts AES-256-GCM ciphertext produced by encryptToken.
+// Expects nonce || ciphertext format.
+func decryptToken(key, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("creating AES cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("creating GCM: %w", err)
+	}
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decrypting token: %w", err)
+	}
+	return plaintext, nil
 }
 
 // enqueueScript atomically checks the queue length and pushes the job only if
@@ -91,9 +140,24 @@ func (q *QueuedMailer) SendEmailVerification(ctx context.Context, toEmail, token
 	})
 }
 
+// SendOAuthLinkConfirmation sends the link confirmation email synchronously via inner.
+// Bypasses the queue intentionally -- the token is stored in Postgres (not Redis), so
+// encrypting it in the queue provides no additional protection. Simpler to call directly.
+func (q *QueuedMailer) SendOAuthLinkConfirmation(ctx context.Context, toEmail, token string, expiresIn time.Duration, vars map[string]string) error {
+	return q.inner.SendOAuthLinkConfirmation(ctx, toEmail, token, expiresIn, vars)
+}
+
 // enqueue serializes job to JSON and appends it to the Redis queue.
+// If encKey is set, the token is AES-256-GCM encrypted before serialization.
 // Returns ErrQueueFull if the queue has reached maxQueueSize.
 func (q *QueuedMailer) enqueue(ctx context.Context, job EmailJob) error {
+	if q.encKey != nil {
+		encrypted, err := encryptToken(q.encKey, []byte(job.Token))
+		if err != nil {
+			return fmt.Errorf("encrypting mail token: %w", err)
+		}
+		job.Token = base64.RawURLEncoding.EncodeToString(encrypted)
+	}
 	data, err := json.Marshal(job)
 	if err != nil {
 		return fmt.Errorf("marshaling email job: %w", err)
@@ -130,6 +194,19 @@ func (q *QueuedMailer) StartWorker(ctx context.Context) {
 		if err := json.Unmarshal([]byte(res[1]), &job); err != nil {
 			slog.Error("mail worker: bad job payload", "err", err)
 			continue
+		}
+		if q.encKey != nil {
+			raw, err := base64.RawURLEncoding.DecodeString(job.Token)
+			if err != nil {
+				slog.Error("mail worker: token decode failed", "type", job.Type, "err", err)
+				continue
+			}
+			plain, err := decryptToken(q.encKey, raw)
+			if err != nil {
+				slog.Error("mail worker: token decrypt failed", "type", job.Type, "err", err)
+				continue
+			}
+			job.Token = string(plain)
 		}
 		q.dispatch(ctx, job)
 	}

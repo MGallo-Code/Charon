@@ -90,13 +90,14 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		hasRedis bool
 	)
 	smtpCfg := mail.SMTPConfig{
-		Host:          cfg.SMTPHost,
-		Port:          cfg.SMTPPort,
-		Username:      cfg.SMTPUsername,
-		Password:      cfg.SMTPPassword,
-		FromAddress:   cfg.SMTPFromAddress,
-		ResetURLBase:  cfg.SMTPResetURLBase,
-		VerifyURLBase: cfg.SMTPVerifyURLBase,
+		Host:             cfg.SMTPHost,
+		Port:             cfg.SMTPPort,
+		Username:         cfg.SMTPUsername,
+		Password:         cfg.SMTPPassword,
+		FromAddress:      cfg.SMTPFromAddress,
+		ResetURLBase:     cfg.SMTPResetURLBase,
+		VerifyURLBase:    cfg.SMTPVerifyURLBase,
+		OAuthLinkURLBase: cfg.SMTPOAuthLinkURLBase,
 	}
 	if cfg.RedisURL != "" {
 		// Rate limit policy zeros only matter when Redis is active.
@@ -111,7 +112,7 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		hasRedis = true
 		// QueuedMailer requires Redis for its queue backend; only created when both are available.
 		if ml == nil && cfg.SMTPHost != "" {
-			qm := mail.NewQueuedMailer(mail.NewSMTPMailer(smtpCfg), rdb, mail.DefaultMaxQueueSize)
+			qm := mail.NewQueuedMailer(mail.NewSMTPMailer(smtpCfg), rdb, mail.DefaultMaxQueueSize, []byte(cfg.MailQueueEncKey))
 			go qm.StartWorker(ctx)
 			ml = qm
 		}
@@ -187,6 +188,7 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 			RequireSpecial:   cfg.PasswordRequireSpecial,
 		},
 		OAuthProviders: oauthProviders,
+		SMTPEnabled:    cfg.SMTPHost != "",
 		CV:             cv,
 		CaptchaCP: auth.CaptchaPolicies{
 			Register:             cfg.CaptchaRegister,
@@ -281,6 +283,7 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	r.Get("/health", h.CheckHealth)
 	r.Get("/oauth/{provider}", h.OAuthRedirect)
 	r.Get("/oauth/{provider}/callback", h.OAuthCallback)
+	r.Post("/oauth/link/confirm", h.ConfirmOAuthLink)
 	r.Post("/register/email", h.RegisterByEmail)
 	r.Post("/login/email", h.LoginByEmail)
 	r.Post("/verify/email", h.VerifyEmail)

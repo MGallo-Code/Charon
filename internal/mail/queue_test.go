@@ -41,6 +41,10 @@ func (m *mockInner) SendEmailVerification(_ context.Context, toEmail, token stri
 	return m.err
 }
 
+func (m *mockInner) SendOAuthLinkConfirmation(_ context.Context, _, _ string, _ time.Duration, _ map[string]string) error {
+	return m.err
+}
+
 func TestQueuedMailer_Dispatch_PasswordReset(t *testing.T) {
 	inner := &mockInner{}
 	q := &QueuedMailer{inner: inner}
@@ -128,6 +132,83 @@ func TestErrQueueFull_Sentinel(t *testing.T) {
 	if !errors.Is(wrapped, ErrQueueFull) {
 		t.Error("errors.Is: wrapped ErrQueueFull not detected")
 	}
+}
+
+// testEncKey is a 32-byte AES-256 key for use in tests only.
+var testEncKey = []byte("test-key-32-bytes-long-for-aes!!")
+
+func TestEncryptDecryptToken(t *testing.T) {
+	t.Run("round-trip returns original plaintext", func(t *testing.T) {
+		plaintext := []byte("tok_abc123_reset_token_value")
+
+		encrypted, err := encryptToken(testEncKey, plaintext)
+		if err != nil {
+			t.Fatalf("encryptToken: %v", err)
+		}
+		decrypted, err := decryptToken(testEncKey, encrypted)
+		if err != nil {
+			t.Fatalf("decryptToken: %v", err)
+		}
+		if string(decrypted) != string(plaintext) {
+			t.Errorf("got %q, want %q", decrypted, plaintext)
+		}
+	})
+
+	t.Run("different calls produce different ciphertexts", func(t *testing.T) {
+		plaintext := []byte("same-token-value")
+
+		enc1, err := encryptToken(testEncKey, plaintext)
+		if err != nil {
+			t.Fatalf("encryptToken first call: %v", err)
+		}
+		enc2, err := encryptToken(testEncKey, plaintext)
+		if err != nil {
+			t.Fatalf("encryptToken second call: %v", err)
+		}
+		// Nonce randomness means the two ciphertexts must differ.
+		if string(enc1) == string(enc2) {
+			t.Error("two encryptions of the same plaintext produced identical ciphertexts; nonce randomness broken")
+		}
+	})
+
+	t.Run("tampered ciphertext returns error", func(t *testing.T) {
+		plaintext := []byte("tok_sensitive_value")
+
+		encrypted, err := encryptToken(testEncKey, plaintext)
+		if err != nil {
+			t.Fatalf("encryptToken: %v", err)
+		}
+		// Flip a byte in the ciphertext portion (after the 12-byte nonce).
+		tampered := make([]byte, len(encrypted))
+		copy(tampered, encrypted)
+		tampered[12] ^= 0xFF
+
+		_, err = decryptToken(testEncKey, tampered)
+		if err == nil {
+			t.Error("expected error decrypting tampered ciphertext, got nil")
+		}
+	})
+
+	t.Run("ciphertext shorter than nonce returns error", func(t *testing.T) {
+		_, err := decryptToken(testEncKey, []byte("short"))
+		if err == nil {
+			t.Error("expected error for too-short ciphertext, got nil")
+		}
+	})
+
+	t.Run("wrong key returns error", func(t *testing.T) {
+		plaintext := []byte("tok_value")
+		wrongKey := []byte("wrong-key-32-bytes-long-for-aes!")
+
+		encrypted, err := encryptToken(testEncKey, plaintext)
+		if err != nil {
+			t.Fatalf("encryptToken: %v", err)
+		}
+		_, err = decryptToken(wrongKey, encrypted)
+		if err == nil {
+			t.Error("expected error when decrypting with wrong key, got nil")
+		}
+	})
 }
 
 func TestEmailJob_JSONRoundTrip(t *testing.T) {

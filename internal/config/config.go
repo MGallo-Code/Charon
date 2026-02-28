@@ -26,8 +26,12 @@ type Config struct {
 	SMTPUsername      string
 	SMTPPassword      string
 	SMTPFromAddress   string
-	SMTPResetURLBase  string
-	SMTPVerifyURLBase string
+	SMTPResetURLBase     string
+	SMTPVerifyURLBase    string
+	SMTPOAuthLinkURLBase string
+	// MailQueueEncKey is the 32-byte AES-256 key used to encrypt tokens stored in the Redis mail queue.
+	// If empty when SMTP is configured, tokens sit unencrypted in Redis.
+	MailQueueEncKey string
 
 	// Rate limit policy for registration attempts per email.
 	// Defaults: max=5, window=1h, lockout=1h.
@@ -130,15 +134,23 @@ func LoadConfig() (*Config, error) {
 	cfg.SMTPFromAddress = os.Getenv("SMTP_FROM")
 	cfg.SMTPResetURLBase = os.Getenv("SMTP_RESET_URL")
 	cfg.SMTPVerifyURLBase = os.Getenv("SMTP_VERIFY_URL")
+	cfg.SMTPOAuthLinkURLBase = os.Getenv("SMTP_OAUTH_LINK_URL")
+	cfg.MailQueueEncKey = os.Getenv("MAIL_QUEUE_ENC_KEY")
 
 	// When SMTP is configured, URL bases must be present and use HTTPS.
-	// Tokens in reset/verify links must not travel over plain HTTP.
+	// Tokens in reset/verify/oauth-link links must not travel over plain HTTP.
 	if cfg.SMTPHost != "" {
 		if !strings.HasPrefix(cfg.SMTPResetURLBase, "https://") {
 			return nil, fmt.Errorf("SMTP_RESET_URL must be set and start with https://")
 		}
 		if !strings.HasPrefix(cfg.SMTPVerifyURLBase, "https://") {
 			return nil, fmt.Errorf("SMTP_VERIFY_URL must be set and start with https://")
+		}
+		if !strings.HasPrefix(cfg.SMTPOAuthLinkURLBase, "https://") {
+			return nil, fmt.Errorf("SMTP_OAUTH_LINK_URL must be set and start with https://")
+		}
+		if cfg.MailQueueEncKey == "" {
+			slog.Warn("MAIL_QUEUE_ENC_KEY not set: mail queue tokens stored unencrypted in Redis")
 		}
 	}
 
