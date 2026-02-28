@@ -592,3 +592,137 @@ func TestFindOrCreateOAuthUser_EmailLink_SetProfileError_NonFatal(t *testing.T) 
 		t.Errorf("user ID: expected %v, got %v", userID, user.ID)
 	}
 }
+
+// --- SMTP-enabled confirmation flow ---
+
+// TestFindOrCreateOAuthUser_ExistingEmail_SMTPEnabled verifies that when SMTP is enabled and an
+// existing email-password account is found, ErrOAuthLinkRequired is returned and a pending link is stored.
+func TestFindOrCreateOAuthUser_ExistingEmail_SMTPEnabled(t *testing.T) {
+	email := "existing@example.com"
+	userID, _ := uuid.NewV7()
+	now := time.Now()
+	ml := &testutil.MockMailer{}
+
+	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
+	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: ml, SMTPEnabled: true}
+
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
+		Sub: "google-sub-smtp", Email: email, EmailVerified: true,
+	})
+
+	if !errors.Is(err, ErrOAuthLinkRequired) {
+		t.Fatalf("expected ErrOAuthLinkRequired, got %v", err)
+	}
+	if user != nil {
+		t.Error("expected nil user when link confirmation required")
+	}
+	// Confirmation email must have been sent to the right address.
+	if ml.LastOAuthLinkTo != email {
+		t.Errorf("confirmation email to: expected %q, got %q", email, ml.LastOAuthLinkTo)
+	}
+	// A pending link must be stored in the mock.
+	if len(ms.OAuthPendingLinks) != 1 {
+		t.Errorf("expected 1 pending link, got %d", len(ms.OAuthPendingLinks))
+	}
+}
+
+// TestOAuthCallback_LinkRequired verifies that OAuthCallback returns
+// {"action":"link_confirmation_sent"} when an existing account is found and SMTP is enabled.
+func TestOAuthCallback_LinkRequired(t *testing.T) {
+	email := "existing@example.com"
+	userID, _ := uuid.NewV7()
+	now := time.Now()
+
+	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
+	ml := &testutil.MockMailer{}
+
+	h := AuthHandler{
+		PS:         ms,
+		RS:         testutil.NewMockCache(),
+		RL:         &testutil.MockRateLimiter{},
+		ML:         ml,
+		SessionTTL: 24 * time.Hour,
+		SMTPEnabled: true,
+		OAuthProviders: map[string]oauth.Provider{
+			"google": &mockProvider{name: "google", claims: &oauth.Claims{
+				Sub: "google-sub-link", Email: email, EmailVerified: true,
+			}},
+		},
+	}
+
+	state := "matchingstate"
+	w := httptest.NewRecorder()
+	h.OAuthCallback(w, makeCallbackRequest(makeStateCookie(state, "verifier"), state, "code"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Action != "link_confirmation_sent" {
+		t.Errorf("action: expected %q, got %q", "link_confirmation_sent", resp.Action)
+	}
+	// No session cookie should be issued.
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "__Host-charon-session" {
+			t.Error("expected no session cookie to be set")
+		}
+	}
+}
+
+// TestConfirmOAuthLink_Valid verifies that a valid pending-link token issues a session.
+func TestConfirmOAuthLink_Valid(t *testing.T) {
+	userID, _ := uuid.NewV7()
+	email := "linkme@example.com"
+	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email})
+	mc := testutil.NewMockCache()
+
+	// Pre-generate a token and store its hash as a pending link.
+	rawToken, tokenHash, _ := GenerateToken()
+	expiresAt := time.Now().Add(1 * time.Hour)
+	_ = ms.CreateOAuthPendingLink(context.Background(), tokenHash[:], userID, "google", "google-sub-confirm",
+		nil, nil, nil, expiresAt)
+
+	h := &AuthHandler{
+		PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: &testutil.MockMailer{},
+		SessionTTL: 24 * time.Hour,
+	}
+
+	tokenStr := base64.RawURLEncoding.EncodeToString(rawToken[:])
+	body := strings.NewReader(`{"token":"` + tokenStr + `"}`)
+	r := httptest.NewRequest(http.MethodPost, "/oauth/link/confirm", body)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ConfirmOAuthLink(w, r)
+
+	assertOK(t, w)
+	assertSessionCookie(t, w)
+
+	// Pending link must be consumed (deleted).
+	if len(ms.OAuthPendingLinks) != 0 {
+		t.Errorf("expected pending link to be consumed, got %d remaining", len(ms.OAuthPendingLinks))
+	}
+}
+
+// TestConfirmOAuthLink_InvalidToken verifies that an invalid or expired token returns 400.
+func TestConfirmOAuthLink_InvalidToken(t *testing.T) {
+	ms := testutil.NewMockStore()
+	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
+
+	// Token that was never stored -- ConsumeOAuthPendingLink returns ErrNoRows.
+	_, bogusHash, _ := GenerateToken()
+	tokenStr := base64.RawURLEncoding.EncodeToString(bogusHash[:])
+	body := strings.NewReader(`{"token":"` + tokenStr + `"}`)
+	r := httptest.NewRequest(http.MethodPost, "/oauth/link/confirm", body)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.ConfirmOAuthLink(w, r)
+
+	assertBadRequest(t, w, "invalid or expired token")
+}

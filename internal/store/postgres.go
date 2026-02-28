@@ -378,6 +378,41 @@ func (s *PostgresStore) SetOAuthProfile(ctx context.Context, id uuid.UUID, first
 	return nil
 }
 
+// CreateOAuthPendingLink inserts a pending OAuth link token for the given user.
+// Caller generates token hash (SHA-256) and sets expires_at.
+func (s *PostgresStore) CreateOAuthPendingLink(ctx context.Context, tokenHash []byte, userID uuid.UUID, provider, providerID string, givenName, familyName, picture *string, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO oauth_pending_links
+			(token_hash, user_id, provider, provider_id, given_name, family_name, picture, expires_at)
+		VALUES
+			($1, $2, $3, $4, $5, $6, $7, $8)
+	`, tokenHash, userID, provider, providerID, givenName, familyName, picture, expiresAt)
+	if err != nil {
+		return fmt.Errorf("creating oauth pending link: %w", err)
+	}
+	return nil
+}
+
+// ConsumeOAuthPendingLink atomically deletes and returns a pending link by token hash.
+// Returns pgx.ErrNoRows if not found or expired.
+func (s *PostgresStore) ConsumeOAuthPendingLink(ctx context.Context, tokenHash []byte) (*OAuthPendingLink, error) {
+	link := &OAuthPendingLink{}
+	err := s.pool.QueryRow(ctx, `
+		DELETE FROM oauth_pending_links
+		WHERE token_hash = $1
+			AND expires_at > NOW()
+		RETURNING user_id, provider, provider_id, given_name, family_name, picture, expires_at
+	`, tokenHash).Scan(
+		&link.UserID, &link.Provider, &link.ProviderID,
+		&link.GivenName, &link.FamilyName, &link.Picture,
+		&link.ExpiresAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("consuming oauth pending link: %w", err)
+	}
+	return link, nil
+}
+
 // CleanupExpiredSessions deletes sessions expired before retention cutoff.
 // Pass a grace window (e.g. 7*24*time.Hour) to retain sessions for audit before deletion.
 // Returns rows deleted.

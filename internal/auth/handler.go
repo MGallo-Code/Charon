@@ -106,6 +106,14 @@ type Store interface {
 	// each column is only written if currently NULL, preserving any user-set values.
 	SetOAuthProfile(ctx context.Context, userID uuid.UUID, firstName, lastName, avatarURL *string) error
 
+	// CreateOAuthPendingLink stores a pending OAuth link token for later confirmation.
+	// Caller supplies the SHA-256 hash of the raw token.
+	CreateOAuthPendingLink(ctx context.Context, tokenHash []byte, userID uuid.UUID, provider, providerID string, givenName, familyName, picture *string, expiresAt time.Time) error
+
+	// ConsumeOAuthPendingLink atomically deletes and returns a pending link by token hash.
+	// Returns pgx.ErrNoRows if not found or expired.
+	ConsumeOAuthPendingLink(ctx context.Context, tokenHash []byte) (*store.OAuthPendingLink, error)
+
 	// CheckHealth returns nil if Postgres is reachable, non-nil otherwise.
 	CheckHealth(ctx context.Context) error
 }
@@ -177,6 +185,10 @@ type AuthHandler struct {
 	// OAuthProviders is a map of registered OAuth providers keyed by provider name (e.g. "google").
 	// Nil or missing key disables that provider -- handlers return 404.
 	OAuthProviders map[string]oauth.Provider
+
+	// SMTPEnabled indicates whether SMTP is configured. When true, OAuth account linking
+	// requires email confirmation instead of auto-linking.
+	SMTPEnabled bool
 }
 
 // CheckHealth handles GET /health — pings Postgres and Redis, returns per-dependency status.

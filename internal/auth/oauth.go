@@ -22,6 +22,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ErrOAuthLinkRequired is returned by findOrCreateOAuthUser when an existing
+// password account shares the OAuth email. The caller should inform the user
+// that a confirmation email was sent; no session is issued yet.
+var ErrOAuthLinkRequired = errors.New("oauth link requires email confirmation")
+
 // oauthStateCookie is the payload stored in __Host-oauth-state during the OAuth round-trip.
 type oauthStateCookie struct {
 	State    string `json:"state"`
@@ -104,6 +109,15 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.findOrCreateOAuthUser(r, provider.Name(), claims)
+	if errors.Is(err, ErrOAuthLinkRequired) {
+		logInfo(r, "oauth link confirmation sent", "provider", provider.Name())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(struct {
+			Action string `json:"action"`
+		}{"link_confirmation_sent"})
+		return
+	}
 	if err != nil {
 		logError(r, "oauth callback: find or create user failed", "error", err)
 		InternalServerError(w, r, err)
@@ -173,31 +187,33 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, cl
 		return nil, fmt.Errorf("looking up oauth user: %w", err)
 	}
 
-	// Existing email account -- link this OAuth identity.
+	// Existing email account -- require confirmation before linking.
 	existing, err := h.PS.GetUserByEmail(r.Context(), email)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("looking up user by email for oauth link: %w", err)
 	}
 	if existing != nil {
-		// Provider verified this email -- confirm it in our records if not already done.
-		if existing.EmailConfirmedAt == nil {
-			if confErr := h.PS.SetEmailConfirmedAt(r.Context(), existing.ID); confErr != nil {
-				logWarn(r, "oauth: failed to confirm email on link", "error", confErr, "user_id", existing.ID)
-			}
+		if !h.SMTPEnabled {
+			// No SMTP -- fall back to auto-link (insecure but unavoidable without email).
+			logWarn(r, "oauth: smtp disabled, auto-linking without confirmation", "user_id", existing.ID)
+			return h.autoLinkOAuthUser(r, existing, provider, claims)
 		}
-		if linkErr := h.PS.LinkOAuthToUser(r.Context(), existing.ID, provider, claims.Sub); linkErr != nil {
-			// Non-fatal: user may already have a different provider linked.
-			logWarn(r, "oauth: could not link identity to account", "error", linkErr, "user_id", existing.ID)
-		} else {
-			h.auditLog(r, &existing.ID, "user.oauth_linked", nil)
+		// Send confirmation email; the account owner must click to approve linking.
+		token, tokenHash, err := GenerateToken()
+		if err != nil {
+			return nil, fmt.Errorf("generating oauth link token: %w", err)
 		}
-		// Non-fatal: only fills NULL columns via COALESCE, won't overwrite existing profile data.
-		if profErr := h.PS.SetOAuthProfile(r.Context(), existing.ID,
-			strOrNil(claims.GivenName), strOrNil(claims.FamilyName), strOrNil(claims.Picture),
-		); profErr != nil {
-			logWarn(r, "oauth: could not update profile on link", "error", profErr, "user_id", existing.ID)
+		expiresAt := time.Now().Add(1 * time.Hour)
+		if err := h.PS.CreateOAuthPendingLink(r.Context(), tokenHash[:], existing.ID, provider, claims.Sub,
+			strOrNil(claims.GivenName), strOrNil(claims.FamilyName), strOrNil(claims.Picture), expiresAt,
+		); err != nil {
+			return nil, fmt.Errorf("storing oauth pending link: %w", err)
 		}
-		return existing, nil
+		tokenStr := base64.RawURLEncoding.EncodeToString(token[:])
+		if err := h.ML.SendOAuthLinkConfirmation(r.Context(), email, tokenStr, time.Until(expiresAt), nil); err != nil {
+			logWarn(r, "oauth: failed to send link confirmation email", "error", err, "user_id", existing.ID)
+		}
+		return nil, ErrOAuthLinkRequired
 	}
 
 	// New user.
@@ -213,6 +229,129 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, cl
 	h.auditLog(r, &userID, "user.registered", nil)
 	logInfo(r, "oauth user created", "user_id", userID, "provider", provider)
 	return &store.User{ID: userID}, nil
+}
+
+// autoLinkOAuthUser links the OAuth identity to existing without sending a confirmation email.
+// Used as a fallback when SMTP is not configured.
+func (h *AuthHandler) autoLinkOAuthUser(r *http.Request, existing *store.User, provider string, claims *oauth.Claims) (*store.User, error) {
+	if existing.EmailConfirmedAt == nil {
+		if confErr := h.PS.SetEmailConfirmedAt(r.Context(), existing.ID); confErr != nil {
+			logWarn(r, "oauth: failed to confirm email on link", "error", confErr, "user_id", existing.ID)
+		}
+	}
+	if linkErr := h.PS.LinkOAuthToUser(r.Context(), existing.ID, provider, claims.Sub); linkErr != nil {
+		logWarn(r, "oauth: could not link identity to account", "error", linkErr, "user_id", existing.ID)
+	} else {
+		h.auditLog(r, &existing.ID, "user.oauth_linked", nil)
+	}
+	if profErr := h.PS.SetOAuthProfile(r.Context(), existing.ID,
+		strOrNil(claims.GivenName), strOrNil(claims.FamilyName), strOrNil(claims.Picture),
+	); profErr != nil {
+		logWarn(r, "oauth: could not update profile on link", "error", profErr, "user_id", existing.ID)
+	}
+	return existing, nil
+}
+
+// ConfirmOAuthLink handles POST /oauth/link/confirm -- consumes the pending-link token
+// emailed to the account owner and completes the OAuth identity link.
+// Returns 200 with user_id and csrf_token on success; 400 for invalid/expired token.
+func (h *AuthHandler) ConfirmOAuthLink(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		logWarn(r, "confirm oauth link: failed to decode input", "error", err)
+		BadRequest(w, r, "error decoding request body")
+		return
+	}
+	if input.Token == "" {
+		BadRequest(w, r, "token is required")
+		return
+	}
+
+	rawToken, err := base64.RawURLEncoding.DecodeString(input.Token)
+	if err != nil {
+		logWarn(r, "confirm oauth link: invalid token encoding", "error", err)
+		BadRequest(w, r, "invalid token")
+		return
+	}
+	tokenHash := sha256.Sum256(rawToken)
+
+	link, err := h.PS.ConsumeOAuthPendingLink(r.Context(), tokenHash[:])
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			logWarn(r, "confirm oauth link: invalid or expired token")
+			BadRequest(w, r, "invalid or expired token")
+			return
+		}
+		logError(r, "confirm oauth link: failed to consume token", "error", err)
+		InternalServerError(w, r, err)
+		return
+	}
+
+	// Link the OAuth identity. Non-fatal if already linked (idempotent).
+	if linkErr := h.PS.LinkOAuthToUser(r.Context(), link.UserID, link.Provider, link.ProviderID); linkErr != nil {
+		logWarn(r, "confirm oauth link: could not link identity", "error", linkErr, "user_id", link.UserID)
+	} else {
+		h.auditLog(r, &link.UserID, "user.oauth_linked", marshalMeta(struct {
+			Provider string `json:"provider"`
+		}{link.Provider}))
+	}
+
+	// Confirm email -- provider has verified it.
+	if confErr := h.PS.SetEmailConfirmedAt(r.Context(), link.UserID); confErr != nil {
+		logWarn(r, "confirm oauth link: failed to set email_confirmed_at", "error", confErr, "user_id", link.UserID)
+	}
+
+	// Update profile fields -- COALESCE-safe, only fills NULL columns.
+	if profErr := h.PS.SetOAuthProfile(r.Context(), link.UserID, link.GivenName, link.FamilyName, link.Picture); profErr != nil {
+		logWarn(r, "confirm oauth link: failed to set oauth profile", "error", profErr, "user_id", link.UserID)
+	}
+
+	sessionToken, tokenHash2, err := GenerateToken()
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+	csrfToken, err := GenerateCSRFToken()
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+	sessionID, err := uuid.NewV7()
+	if err != nil {
+		InternalServerError(w, r, err)
+		return
+	}
+
+	expiresAt := time.Now().Add(h.SessionTTL)
+	ttl := int(h.SessionTTL.Seconds())
+	ipAddr := r.RemoteAddr
+	userAgent := r.UserAgent()
+
+	if err := h.PS.CreateSession(r.Context(), sessionID, link.UserID, tokenHash2[:], csrfToken[:], expiresAt, &ipAddr, &userAgent); err != nil {
+		logError(r, "confirm oauth link: failed to create session", "error", err)
+		InternalServerError(w, r, err)
+		return
+	}
+	if err := h.RS.SetSession(r.Context(), base64.RawURLEncoding.EncodeToString(tokenHash2[:]), store.Session{
+		ID: sessionID, UserID: link.UserID, TokenHash: tokenHash2[:], CSRFToken: csrfToken[:], ExpiresAt: expiresAt,
+	}, ttl); err != nil {
+		logWarn(r, "confirm oauth link: failed to cache session in redis", "error", err)
+	}
+
+	SetSessionCookie(w, *sessionToken, expiresAt)
+	h.auditLog(r, &link.UserID, "user.login", marshalMeta(struct {
+		Provider string `json:"provider"`
+	}{link.Provider}))
+	logInfo(r, "oauth link confirmed, session issued", "user_id", link.UserID, "provider", link.Provider)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(struct {
+		UserID    string `json:"user_id"`
+		CSRFToken string `json:"csrf_token"`
+	}{link.UserID.String(), base64.RawURLEncoding.EncodeToString(csrfToken[:])})
 }
 
 // strOrNil converts an empty string to nil; non-empty strings are returned as a pointer.

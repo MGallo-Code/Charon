@@ -30,17 +30,24 @@ type Mailer interface {
 	// Unresolved placeholders are stripped rather than left in the email.
 	// Reserved keys (url, toEmail, expiresIn) are owned by the mailer and cannot be overridden via vars.
 	SendEmailVerification(ctx context.Context, toEmail, token string, expiresIn time.Duration, vars map[string]string) error
+
+	// SendOAuthLinkConfirmation sends an account-link confirmation email.
+	// The recipient must click the link to approve linking their OAuth identity to this account.
+	// vars is a map of %%key%% placeholder names to replacement values.
+	// Reserved keys (url, toEmail, expiresIn) are owned by the mailer and cannot be overridden via vars.
+	SendOAuthLinkConfirmation(ctx context.Context, toEmail, token string, expiresIn time.Duration, vars map[string]string) error
 }
 
 // SMTPConfig holds all configuration for SMTPMailer.
 type SMTPConfig struct {
-	Host          string
-	Port          string
-	Username      string
-	Password      string
-	FromAddress   string
-	ResetURLBase  string
-	VerifyURLBase string
+	Host             string
+	Port             string
+	Username         string
+	Password         string
+	FromAddress      string
+	ResetURLBase     string
+	VerifyURLBase    string
+	OAuthLinkURLBase string
 }
 
 // SMTPMailer sends transactional email via SMTP.
@@ -62,6 +69,10 @@ func (n *NopMailer) SendPasswordReset(_ context.Context, _, _ string, _ time.Dur
 }
 
 func (n *NopMailer) SendEmailVerification(_ context.Context, _, _ string, _ time.Duration, _ map[string]string) error {
+	return nil
+}
+
+func (n *NopMailer) SendOAuthLinkConfirmation(_ context.Context, _, _ string, _ time.Duration, _ map[string]string) error {
 	return nil
 }
 
@@ -222,6 +233,38 @@ func (m *SMTPMailer) SendEmailVerification(ctx context.Context, toEmail, token s
 
 	if err := m.sendMail(ctx, toEmail, applyVars(msg, merged)); err != nil {
 		return fmt.Errorf("sending email verification: %w", err)
+	}
+	return nil
+}
+
+// SendOAuthLinkConfirmation emails an account-link confirmation link to toEmail.
+// The recipient must click the link to approve linking their OAuth identity to this account.
+func (m *SMTPMailer) SendOAuthLinkConfirmation(ctx context.Context, toEmail, token string, expiresIn time.Duration, vars map[string]string) error {
+	merged := make(map[string]string, len(vars)+3)
+	for k, v := range vars {
+		if !reservedVars[k] {
+			merged[k] = v
+		}
+	}
+	merged["toEmail"] = toEmail
+	merged["expiresIn"] = formatDuration(expiresIn)
+	merged["url"] = m.cfg.OAuthLinkURLBase + "?token=" + url.QueryEscape(token)
+
+	body := "Someone signed in with a social account that matches your email address.\n\n" +
+		"Click the link below to approve linking that account to yours:\n\n" +
+		"%%url%%\n\n" +
+		"This link expires in %%expiresIn%%. If you did not request this, ignore this email -- your account is safe."
+
+	msg := "From: " + m.cfg.FromAddress + "\r\n" +
+		"To: " + toEmail + "\r\n" +
+		"Subject: Approve account linking\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain; charset=UTF-8\r\n" +
+		"\r\n" +
+		body
+
+	if err := m.sendMail(ctx, toEmail, applyVars(msg, merged)); err != nil {
+		return fmt.Errorf("sending oauth link confirmation: %w", err)
 	}
 	return nil
 }
