@@ -6,7 +6,6 @@ package testutil
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -38,14 +37,17 @@ type MockStore struct {
 	ConsumeTokenErr           error
 	SetEmailConfirmedAtErr    error
 	WriteAuditLogErr          error
-	GetUserByOAuthProviderErr error
-	CreateOAuthUserErr        error
-	LinkOAuthToUserErr        error
-	SetOAuthProfileErr        error
+	GetUserByOAuthProviderErr    error
+	CreateOAuthUserErr           error
+	LinkOAuthToUserErr           error
+	SetOAuthProfileErr           error
+	CreateOAuthPendingLinkErr    error
+	ConsumeOAuthPendingLinkErr   error
 
-	Users    map[string]*store.User    // keyed by email
-	Sessions map[string]*store.Session // keyed by string(tokenHash)
-	Tokens   map[string]*store.Token   // keyed by string(tokenHash)
+	Users            map[string]*store.User             // keyed by email
+	Sessions         map[string]*store.Session          // keyed by string(tokenHash)
+	Tokens           map[string]*store.Token            // keyed by string(tokenHash)
+	OAuthPendingLinks map[string]*store.OAuthPendingLink // keyed by string(tokenHash)
 
 	mu sync.Mutex
 }
@@ -53,9 +55,10 @@ type MockStore struct {
 // NewMockStore returns a MockStore seeded with the given users, indexed by email.
 func NewMockStore(users ...*store.User) *MockStore {
 	ms := &MockStore{
-		Users:    make(map[string]*store.User),
-		Sessions: make(map[string]*store.Session),
-		Tokens:   make(map[string]*store.Token),
+		Users:             make(map[string]*store.User),
+		Sessions:          make(map[string]*store.Session),
+		Tokens:            make(map[string]*store.Token),
+		OAuthPendingLinks: make(map[string]*store.OAuthPendingLink),
 	}
 	for _, u := range users {
 		if u.Email != nil {
@@ -328,6 +331,41 @@ func (m *MockStore) LinkOAuthToUser(_ context.Context, userID uuid.UUID, provide
 	return fmt.Errorf("linking oauth to user: %w", pgx.ErrNoRows)
 }
 
+func (m *MockStore) CreateOAuthPendingLink(_ context.Context, tokenHash []byte, userID uuid.UUID, provider, providerID string, givenName, familyName, picture *string, expiresAt time.Time) error {
+	if m.CreateOAuthPendingLinkErr != nil {
+		return m.CreateOAuthPendingLinkErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.OAuthPendingLinks == nil {
+		m.OAuthPendingLinks = make(map[string]*store.OAuthPendingLink)
+	}
+	m.OAuthPendingLinks[string(tokenHash)] = &store.OAuthPendingLink{
+		UserID:     userID,
+		Provider:   provider,
+		ProviderID: providerID,
+		GivenName:  givenName,
+		FamilyName: familyName,
+		Picture:    picture,
+		ExpiresAt:  expiresAt,
+	}
+	return nil
+}
+
+func (m *MockStore) ConsumeOAuthPendingLink(_ context.Context, tokenHash []byte) (*store.OAuthPendingLink, error) {
+	if m.ConsumeOAuthPendingLinkErr != nil {
+		return nil, m.ConsumeOAuthPendingLinkErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	link, ok := m.OAuthPendingLinks[string(tokenHash)]
+	if !ok || link.ExpiresAt.Before(time.Now()) {
+		return nil, fmt.Errorf("consuming oauth pending link: %w", pgx.ErrNoRows)
+	}
+	delete(m.OAuthPendingLinks, string(tokenHash))
+	return link, nil
+}
+
 // MockCache implements auth.SessionCache for tests.
 // Always stateful...Sessions is a map, like a real cache.
 // Use *Err fields to inject errors for specific operations.
@@ -338,7 +376,8 @@ type MockCache struct {
 	DeleteSessionErr     error
 	DeleteAllSessionsErr error
 
-	Sessions map[string]*store.CachedSession // keyed by base64 token hash
+	Sessions   map[string]*store.CachedSession // keyed by base64 token hash
+	Tombstones map[string]bool                 // keyed by base64 token hash
 
 	mu sync.Mutex
 }
@@ -346,16 +385,20 @@ type MockCache struct {
 // NewMockCache returns an empty MockCache ready for use.
 func NewMockCache() *MockCache {
 	return &MockCache{
-		Sessions: make(map[string]*store.CachedSession),
+		Sessions:   make(map[string]*store.CachedSession),
+		Tombstones: make(map[string]bool),
 	}
 }
 
 func (m *MockCache) GetSession(_ context.Context, tokenHash string) (*store.CachedSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.Tombstones[tokenHash] {
+		return nil, store.ErrSessionTombstoned
+	}
 	s, ok := m.Sessions[tokenHash]
 	if !ok {
-		return nil, errors.New("cache miss")
+		return nil, store.ErrCacheMiss
 	}
 	return s, nil
 }
@@ -366,6 +409,9 @@ func (m *MockCache) SetSession(_ context.Context, tokenHash string, sessionData 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.Tombstones[tokenHash] {
+		return nil // tombstone present -- skip write
+	}
 	if m.Sessions == nil {
 		m.Sessions = make(map[string]*store.CachedSession)
 	}
@@ -384,6 +430,10 @@ func (m *MockCache) DeleteSession(_ context.Context, tokenHash string, userID uu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.Sessions, tokenHash)
+	if m.Tombstones == nil {
+		m.Tombstones = make(map[string]bool)
+	}
+	m.Tombstones[tokenHash] = true
 	return nil
 }
 
@@ -429,8 +479,9 @@ func (m *MockCaptchaVerifier) Verify(_ context.Context, _, _ string) error {
 // Set *Err fields to inject send failures.
 // Last* fields capture the most recent call's arguments for each method.
 type MockMailer struct {
-	SendPasswordResetErr     error
-	SendEmailVerificationErr error
+	SendPasswordResetErr        error
+	SendEmailVerificationErr    error
+	SendOAuthLinkConfirmationErr error
 
 	// Password reset captures
 	LastResetTo       string
@@ -443,6 +494,12 @@ type MockMailer struct {
 	LastVerifToken  string
 	LastVerifExpiry time.Duration
 	LastVerifVars   map[string]string
+
+	// OAuth link confirmation captures
+	LastOAuthLinkTo     string
+	LastOAuthLinkToken  string
+	LastOAuthLinkExpiry time.Duration
+	LastOAuthLinkVars   map[string]string
 }
 
 func (m *MockMailer) SendPasswordReset(_ context.Context, toEmail, token string, expiresIn time.Duration, vars map[string]string) error {
@@ -459,4 +516,12 @@ func (m *MockMailer) SendEmailVerification(_ context.Context, toEmail, token str
 	m.LastVerifExpiry = expiresIn
 	m.LastVerifVars = vars
 	return m.SendEmailVerificationErr
+}
+
+func (m *MockMailer) SendOAuthLinkConfirmation(_ context.Context, toEmail, token string, expiresIn time.Duration, vars map[string]string) error {
+	m.LastOAuthLinkTo = toEmail
+	m.LastOAuthLinkToken = token
+	m.LastOAuthLinkExpiry = expiresIn
+	m.LastOAuthLinkVars = vars
+	return m.SendOAuthLinkConfirmationErr
 }

@@ -59,6 +59,7 @@ func (s *RedisStore) CheckHealth(ctx context.Context) error {
 
 // SetSession caches session with given TTL in seconds.
 // Also tracks token hash in per-user set for bulk deletion.
+// No-ops silently if a tombstone is present -- session was recently deleted and must not be repopulated.
 func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionData Session, ttl int) error {
 	// Put session data into json string format for redis-structured session obj
 	cacheOut, err := json.Marshal(CachedSession{
@@ -72,25 +73,26 @@ func (s *RedisStore) SetSession(ctx context.Context, tokenHash string, sessionDa
 
 	sessionKey := "session:" + tokenHash
 	userSetKey := "user_sessions:" + sessionData.UserID.String()
-	ttlDur := time.Duration(ttl) * time.Second
 
-	// Create pipeline to make sure atomic
-	pipe := s.rdb.TxPipeline()
-	pipe.Set(ctx, sessionKey, cacheOut, ttlDur)
-	pipe.SAdd(ctx, userSetKey, tokenHash)
-	// Extend user set TTL only if new TTL is larger -- preserves longer-lived sessions.
-	pipe.ExpireGT(ctx, userSetKey, ttlDur)
-
-	// Exec pipeline cmds, return any err
-	_, err = pipe.Exec(ctx)
+	result, err := setSessionScript.Run(ctx, s.rdb,
+		[]string{sessionKey, userSetKey},
+		cacheOut,
+		ttl,
+		tokenHash,
+	).Int64()
 	if err != nil {
 		return fmt.Errorf("caching session: %w", err)
+	}
+	if result == 0 {
+		// tombstone present -- session was recently deleted, skip repopulation
+		return nil
 	}
 	return nil
 }
 
 // GetSession retrieves cached session by token hash.
-// Returns ErrCacheMiss on a true Redis miss; other errors indicate infrastructure failures.
+// Returns ErrCacheMiss on a true Redis miss; ErrSessionTombstoned if the session
+// was recently deleted; other errors indicate infrastructure failures.
 func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedSession, error) {
 	raw, err := s.rdb.Get(ctx, "session:"+tokenHash).Result()
 	if err != nil {
@@ -98,6 +100,10 @@ func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedS
 			return nil, ErrCacheMiss
 		}
 		return nil, fmt.Errorf("fetching session: %w", err)
+	}
+
+	if raw == "tombstone" {
+		return nil, ErrSessionTombstoned
 	}
 
 	// Unmarshal JSON into CachedSession
@@ -109,10 +115,11 @@ func (s *RedisStore) GetSession(ctx context.Context, tokenHash string) (*CachedS
 	return &cached, nil
 }
 
-// DeleteSession removes session from cache and from user tracking set.
+// DeleteSession writes a 60-second tombstone for the session key and removes it from
+// the user tracking set. Tombstone prevents Postgres-fallback repopulation of deleted sessions.
 func (s *RedisStore) DeleteSession(ctx context.Context, tokenHash string, userID uuid.UUID) error {
 	pipe := s.rdb.TxPipeline()
-	pipe.Del(ctx, "session:"+tokenHash)
+	pipe.Set(ctx, "session:"+tokenHash, "tombstone", 60*time.Second)
 	pipe.SRem(ctx, "user_sessions:"+userID.String(), tokenHash)
 
 	_, err := pipe.Exec(ctx)
@@ -132,18 +139,33 @@ func (s *RedisStore) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID
 	return nil
 }
 
-// deleteAllSessionsScript atomically fetches every token hash for a user, deletes each
-// session key, then removes the tracking set in a single Redis operation.
-// Prevents a concurrent SetSession from slipping through between SMEMBERS and DEL.
+// deleteAllSessionsScript atomically fetches every token hash for a user, writes a 60-second
+// tombstone for each session key, then removes the tracking set in a single Redis operation.
+// Tombstones prevent concurrent Postgres fallbacks from repopulating deleted sessions.
 // KEYS[1] = "user_sessions:{userID}", ARGV[1] = "session:" prefix.
-// Returns the number of session keys deleted.
+// Returns the number of session keys tombstoned.
 var deleteAllSessionsScript = redis.NewScript(`
 local hashes = redis.call('SMEMBERS', KEYS[1])
 for _, hash in ipairs(hashes) do
-    redis.call('DEL', ARGV[1] .. hash)
+    redis.call('SET', ARGV[1] .. hash, 'tombstone', 'PX', 60000)
 end
 redis.call('DEL', KEYS[1])
 return #hashes
+`)
+
+// setSessionScript atomically guards SetSession against overwriting tombstones.
+// Returns 0 without writing if the session key currently holds a tombstone.
+// Returns 1 and writes the session, SADD, and EXPIREGT on success.
+// KEYS[1] = session key, KEYS[2] = user set key.
+// ARGV[1] = session JSON, ARGV[2] = TTL in seconds, ARGV[3] = tokenHash (for SADD).
+var setSessionScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == 'tombstone' then
+    return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
+redis.call('SADD', KEYS[2], ARGV[3])
+redis.call('EXPIREGT', KEYS[2], tonumber(ARGV[2]))
+return 1
 `)
 
 // allowScript atomically checks lockout, increments the attempt counter, sets the window TTL

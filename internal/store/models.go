@@ -25,6 +25,10 @@ var ErrCacheMiss = errors.New("cache miss")
 // Callers use errors.Is to distinguish "not configured" from a real infrastructure failure.
 var ErrCacheDisabled = errors.New("cache disabled")
 
+// ErrSessionTombstoned is returned by GetSession when the session key holds a
+// tombstone -- session was recently deleted and must not be repopulated.
+var ErrSessionTombstoned = errors.New("session tombstoned")
+
 // User represents a row in the users table.
 // Nullable columns are pointers — nil means SQL NULL.
 type User struct {
@@ -82,6 +86,18 @@ type AuditEntry struct {
 	IPAddress *string
 	UserAgent *string
 	Metadata  []byte
+}
+
+// OAuthPendingLink holds OAuth identity data for a pending account-link confirmation.
+// Created when an OAuth email matches an existing password account; consumed after the owner confirms.
+type OAuthPendingLink struct {
+	UserID     uuid.UUID
+	Provider   string
+	ProviderID string
+	GivenName  *string
+	FamilyName *string
+	Picture    *string
+	ExpiresAt  time.Time
 }
 
 // Token represents a row in the tokens table.
