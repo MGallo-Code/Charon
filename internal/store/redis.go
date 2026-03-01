@@ -155,16 +155,29 @@ return #hashes
 
 // setSessionScript atomically guards SetSession against overwriting tombstones.
 // Returns 0 without writing if the session key currently holds a tombstone.
-// Returns 1 and writes the session, SADD, and EXPIREGT on success.
+// Returns 1 and writes the session, SADD, and a conditional EXPIRE on success.
+// When ttl > 0: sets the session key with EX and extends the user-set TTL only if
+// the new TTL is greater than the current one (EXPIREGT semantics without Redis 7.0).
+// When ttl == 0: stores without expiry (no-expiry sessions never shrink the user set's TTL).
 // KEYS[1] = session key, KEYS[2] = user set key.
 // ARGV[1] = session JSON, ARGV[2] = TTL in seconds, ARGV[3] = tokenHash (for SADD).
 var setSessionScript = redis.NewScript(`
 if redis.call('GET', KEYS[1]) == 'tombstone' then
     return 0
 end
-redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
+local ttl = tonumber(ARGV[2])
+if ttl > 0 then
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ttl)
+else
+    redis.call('SET', KEYS[1], ARGV[1])
+end
 redis.call('SADD', KEYS[2], ARGV[3])
-redis.call('EXPIREGT', KEYS[2], tonumber(ARGV[2]))
+if ttl > 0 then
+    local curTTL = redis.call('TTL', KEYS[2])
+    if curTTL == -1 or curTTL < ttl then
+        redis.call('EXPIRE', KEYS[2], ttl)
+    end
+end
 return 1
 `)
 

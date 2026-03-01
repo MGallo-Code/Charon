@@ -36,6 +36,9 @@ func TestMain(m *testing.M) {
 		RedisURL:    envOrDefault("TEST_REDIS_URL", "redis://localhost:6380"),
 		Port:        "0", // OS picks a free port
 		LogLevel:    slog.LevelWarn,
+		// Session TTLs -- must be non-zero or SetSession passes EX 0 which Redis rejects.
+		SessionTTL:        24 * time.Hour,
+		SessionRememberMe: 720 * time.Hour,
 		// Rate limit defaults -- must be non-zero or the Lua script gets invalid TTLs.
 		RateRegisterEmailMax:     5,
 		RateRegisterEmailWindow:  time.Hour,
