@@ -338,74 +338,6 @@ func TestFindOrCreateOAuthUser_ReturningUser(t *testing.T) {
 	}
 }
 
-// TestFindOrCreateOAuthUser_EmailLink_UnconfirmedEmail links OAuth to an existing unconfirmed account.
-func TestFindOrCreateOAuthUser_EmailLink_UnconfirmedEmail(t *testing.T) {
-	email := "unconfirmed@example.com"
-	userID, _ := uuid.NewV7()
-
-	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email})
-	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
-
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "google-sub-new", Email: email})
-
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if user.ID != userID {
-		t.Errorf("user ID: expected %v, got %v", userID, user.ID)
-	}
-	linked := ms.Users[email]
-	if linked == nil || linked.OAuthProvider == nil || *linked.OAuthProvider != "google" {
-		t.Error("expected OAuthProvider to be linked to 'google'")
-	}
-}
-
-// TestFindOrCreateOAuthUser_EmailLink_AlreadyConfirmed links OAuth to an already-confirmed account.
-// SetEmailConfirmedAt must not be called; the injected error documents intent but cannot cause
-// test failure since SetEmailConfirmedAt errors are non-fatal (logged and ignored).
-func TestFindOrCreateOAuthUser_EmailLink_AlreadyConfirmed(t *testing.T) {
-	email := "confirmed@example.com"
-	userID, _ := uuid.NewV7()
-	now := time.Now()
-
-	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
-	ms.SetEmailConfirmedAtErr = errors.New("should not be called")
-
-	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
-
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "google-sub-confirmed", Email: email})
-
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	linked := ms.Users[email]
-	if linked == nil || linked.OAuthProvider == nil || *linked.OAuthProvider != "google" {
-		t.Error("expected OAuthProvider to be linked to 'google'")
-	}
-	_ = user
-}
-
-// TestFindOrCreateOAuthUser_EmailLink_LinkError verifies link failure is non-fatal.
-func TestFindOrCreateOAuthUser_EmailLink_LinkError(t *testing.T) {
-	email := "link-err@example.com"
-	userID, _ := uuid.NewV7()
-	now := time.Now()
-
-	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
-	ms.LinkOAuthToUserErr = errors.New("db error")
-
-	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
-
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{Sub: "google-sub-linkerr", Email: email})
-
-	if err != nil {
-		t.Fatalf("link failure must be non-fatal: got error %v", err)
-	}
-	if user.ID != userID {
-		t.Errorf("user ID: expected %v, got %v", userID, user.ID)
-	}
-}
-
 // TestFindOrCreateOAuthUser_NewUser creates a new OAuth user when neither lookup matches.
 func TestFindOrCreateOAuthUser_NewUser(t *testing.T) {
 	email := "newuser@example.com"
@@ -502,97 +434,6 @@ func TestFindOrCreateOAuthUser_NewUser_SetsProfile(t *testing.T) {
 	}
 }
 
-// TestFindOrCreateOAuthUser_EmailLink_SetsProfileIfEmpty sets profile on a linked account with no profile yet.
-func TestFindOrCreateOAuthUser_EmailLink_SetsProfileIfEmpty(t *testing.T) {
-	email := "empty-profile@example.com"
-	userID, _ := uuid.NewV7()
-	now := time.Now()
-
-	// Existing user has no profile fields set.
-	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
-	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
-
-	_, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
-		Sub: "sub-fill-profile", Email: email, EmailVerified: true,
-		GivenName: "Alice", FamilyName: "Smith", Picture: "https://example.com/alice.jpg",
-	})
-
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	u := ms.Users[email]
-	if u.FirstName == nil || *u.FirstName != "Alice" {
-		t.Errorf("first_name: expected %q, got %v", "Alice", u.FirstName)
-	}
-	if u.LastName == nil || *u.LastName != "Smith" {
-		t.Errorf("last_name: expected %q, got %v", "Smith", u.LastName)
-	}
-	if u.AvatarURL == nil || *u.AvatarURL != "https://example.com/alice.jpg" {
-		t.Errorf("avatar_url: expected %q, got %v", "https://example.com/alice.jpg", u.AvatarURL)
-	}
-}
-
-// TestFindOrCreateOAuthUser_EmailLink_KeepsExistingProfile verifies COALESCE: existing profile fields
-// are not overwritten when OAuth provides different values.
-func TestFindOrCreateOAuthUser_EmailLink_KeepsExistingProfile(t *testing.T) {
-	email := "has-profile@example.com"
-	userID, _ := uuid.NewV7()
-	now := time.Now()
-	existingFirst := "Bob"
-	existingAvatar := "https://example.com/bob-original.jpg"
-
-	ms := testutil.NewMockStore(&store.User{
-		ID: userID, Email: &email, EmailConfirmedAt: &now,
-		FirstName: &existingFirst, AvatarURL: &existingAvatar,
-	})
-	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
-
-	_, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
-		Sub: "sub-keep-profile", Email: email, EmailVerified: true,
-		GivenName: "Robert", FamilyName: "Jones", Picture: "https://example.com/bob-new.jpg",
-	})
-
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	u := ms.Users[email]
-	// FirstName and AvatarURL were already set -- must not be overwritten.
-	if u.FirstName == nil || *u.FirstName != "Bob" {
-		t.Errorf("first_name: expected %q (original), got %v", "Bob", u.FirstName)
-	}
-	if u.AvatarURL == nil || *u.AvatarURL != "https://example.com/bob-original.jpg" {
-		t.Errorf("avatar_url: expected original URL, got %v", u.AvatarURL)
-	}
-	// LastName was nil -- should be filled in.
-	if u.LastName == nil || *u.LastName != "Jones" {
-		t.Errorf("last_name: expected %q (filled), got %v", "Jones", u.LastName)
-	}
-}
-
-// TestFindOrCreateOAuthUser_EmailLink_SetProfileError_NonFatal verifies SetOAuthProfile failure is non-fatal.
-func TestFindOrCreateOAuthUser_EmailLink_SetProfileError_NonFatal(t *testing.T) {
-	email := "profile-err@example.com"
-	userID, _ := uuid.NewV7()
-	now := time.Now()
-
-	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
-	ms.SetOAuthProfileErr = errors.New("db error")
-	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: &testutil.MockMailer{}}
-
-	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
-		Sub: "sub-prof-err", Email: email, EmailVerified: true,
-		GivenName: "Fail", FamilyName: "Case",
-	})
-
-	// SetOAuthProfile failure must not surface as a handler error.
-	if err != nil {
-		t.Fatalf("SetOAuthProfile error must be non-fatal: got %v", err)
-	}
-	if user.ID != userID {
-		t.Errorf("user ID: expected %v, got %v", userID, user.ID)
-	}
-}
-
 // --- SMTP-enabled confirmation flow ---
 
 // TestFindOrCreateOAuthUser_ExistingEmail_SMTPEnabled verifies that when SMTP is enabled and an
@@ -623,6 +464,89 @@ func TestFindOrCreateOAuthUser_ExistingEmail_SMTPEnabled(t *testing.T) {
 	// A pending link must be stored in the mock.
 	if len(ms.OAuthPendingLinks) != 1 {
 		t.Errorf("expected 1 pending link, got %d", len(ms.OAuthPendingLinks))
+	}
+}
+
+// TestFindOrCreateOAuthUser_ExistingEmail_SMTPDisabled verifies that when SMTP is disabled and an
+// existing email-password account is found, ErrOAuthLinkUnavailable is returned and no link is stored.
+func TestFindOrCreateOAuthUser_ExistingEmail_SMTPDisabled(t *testing.T) {
+	email := "existing@example.com"
+	userID, _ := uuid.NewV7()
+	now := time.Now()
+	ml := &testutil.MockMailer{}
+
+	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
+	h := &AuthHandler{PS: ms, RS: testutil.NewMockCache(), ML: ml, SMTPEnabled: false}
+
+	user, err := h.findOrCreateOAuthUser(httptest.NewRequest("GET", "/", nil), "google", &oauth.Claims{
+		Sub: "google-sub-nosmtp", Email: email, EmailVerified: true,
+	})
+
+	if !errors.Is(err, ErrOAuthLinkUnavailable) {
+		t.Fatalf("expected ErrOAuthLinkUnavailable, got %v", err)
+	}
+	if user != nil {
+		t.Error("expected nil user when link unavailable")
+	}
+	// No confirmation email should be sent.
+	if ml.LastOAuthLinkTo != "" {
+		t.Errorf("expected no confirmation email, got one sent to %q", ml.LastOAuthLinkTo)
+	}
+	// No pending link should be stored.
+	if len(ms.OAuthPendingLinks) != 0 {
+		t.Errorf("expected 0 pending links, got %d", len(ms.OAuthPendingLinks))
+	}
+}
+
+// TestOAuthCallback_LinkUnavailable verifies that OAuthCallback returns 409 when an existing
+// account is found and SMTP is disabled -- no session is issued, no link is stored.
+func TestOAuthCallback_LinkUnavailable(t *testing.T) {
+	email := "existing@example.com"
+	userID, _ := uuid.NewV7()
+	now := time.Now()
+
+	ms := testutil.NewMockStore(&store.User{ID: userID, Email: &email, EmailConfirmedAt: &now})
+	ml := &testutil.MockMailer{}
+
+	h := AuthHandler{
+		PS:         ms,
+		RS:         testutil.NewMockCache(),
+		RL:         &testutil.MockRateLimiter{},
+		ML:         ml,
+		SessionTTL: 24 * time.Hour,
+		SMTPEnabled: false,
+		OAuthProviders: map[string]oauth.Provider{
+			"google": &mockProvider{name: "google", claims: &oauth.Claims{
+				Sub: "google-sub-nosmtp", Email: email, EmailVerified: true,
+			}},
+		},
+	}
+
+	state := "matchingstate"
+	w := httptest.NewRecorder()
+	h.OAuthCallback(w, makeCallbackRequest(makeStateCookie(state, "verifier"), state, "code"))
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status: expected 409, got %d", w.Code)
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Error == "" {
+		t.Error("expected non-empty error message in response")
+	}
+	// No session cookie should be issued.
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "__Host-session" {
+			t.Error("expected no session cookie to be set")
+		}
+	}
+	// No pending link should be stored.
+	if len(ms.OAuthPendingLinks) != 0 {
+		t.Errorf("expected 0 pending links, got %d", len(ms.OAuthPendingLinks))
 	}
 }
 
@@ -668,7 +592,7 @@ func TestOAuthCallback_LinkRequired(t *testing.T) {
 	}
 	// No session cookie should be issued.
 	for _, c := range w.Result().Cookies() {
-		if c.Name == "__Host-charon-session" {
+		if c.Name == "__Host-session" {
 			t.Error("expected no session cookie to be set")
 		}
 	}

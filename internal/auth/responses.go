@@ -68,6 +68,16 @@ func Forbidden(w http.ResponseWriter) {
 	}{"forbidden"})
 }
 
+// Conflict returns a 409 JSON response with the given message.
+// Use when a request conflicts with existing resource state (e.g. duplicate identity).
+func Conflict(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	json.NewEncoder(w).Encode(struct {
+		Error string `json:"error"`
+	}{message})
+}
+
 // TooManyRequests returns a 429 JSON response.
 func TooManyRequests(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")

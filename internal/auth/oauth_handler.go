@@ -27,6 +27,11 @@ import (
 // that a confirmation email was sent; no session is issued yet.
 var ErrOAuthLinkRequired = errors.New("oauth link requires email confirmation")
 
+// ErrOAuthLinkUnavailable is returned when an existing account matches the OAuth email
+// but SMTP is not configured, making email-confirmed linking impossible.
+// The user must log in with their password instead; no session is issued.
+var ErrOAuthLinkUnavailable = errors.New("oauth account linking unavailable without SMTP")
+
 // oauthStateCookie is the payload stored in __Host-oauth-state during the OAuth round-trip.
 type oauthStateCookie struct {
 	State    string `json:"state"`
@@ -114,6 +119,11 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		OK(w, "link_confirmation_sent")
 		return
 	}
+	if errors.Is(err, ErrOAuthLinkUnavailable) {
+		logWarn(r, "oauth callback: link rejected, smtp disabled", "provider", provider.Name())
+		Conflict(w, "an account with this email already exists. Please log in with your password.")
+		return
+	}
 	if err != nil {
 		logError(r, "oauth callback: find or create user failed", "error", err)
 		InternalServerError(w, r, err)
@@ -190,9 +200,10 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, cl
 	}
 	if existing != nil {
 		if !h.SMTPEnabled {
-			// No SMTP -- fall back to auto-link (insecure but unavoidable without email).
-			logWarn(r, "oauth: smtp disabled, auto-linking without confirmation", "user_id", existing.ID)
-			return h.autoLinkOAuthUser(r, existing, provider, claims)
+			// Without SMTP, email-confirmed linking is impossible. Reject rather than
+			// auto-link -- auto-linking without consent is an account takeover vector.
+			logWarn(r, "oauth: smtp disabled, rejecting link attempt", "user_id", existing.ID)
+			return nil, ErrOAuthLinkUnavailable
 		}
 		// Send confirmation email; the account owner must click to approve linking.
 		token, tokenHash, err := GenerateToken()
@@ -225,27 +236,6 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, cl
 	h.auditLog(r, &userID, "user.registered", nil)
 	logInfo(r, "oauth user created", "user_id", userID, "provider", provider)
 	return &store.User{ID: userID}, nil
-}
-
-// autoLinkOAuthUser links the OAuth identity to existing without sending a confirmation email.
-// Used as a fallback when SMTP is not configured.
-func (h *AuthHandler) autoLinkOAuthUser(r *http.Request, existing *store.User, provider string, claims *oauth.Claims) (*store.User, error) {
-	if existing.EmailConfirmedAt == nil {
-		if confErr := h.PS.SetEmailConfirmedAt(r.Context(), existing.ID); confErr != nil {
-			logWarn(r, "oauth: failed to confirm email on link", "error", confErr, "user_id", existing.ID)
-		}
-	}
-	if linkErr := h.PS.LinkOAuthToUser(r.Context(), existing.ID, provider, claims.Sub); linkErr != nil {
-		logWarn(r, "oauth: could not link identity to account", "error", linkErr, "user_id", existing.ID)
-	} else {
-		h.auditLog(r, &existing.ID, "user.oauth_linked", nil)
-	}
-	if profErr := h.PS.SetOAuthProfile(r.Context(), existing.ID,
-		strOrNil(claims.GivenName), strOrNil(claims.FamilyName), strOrNil(claims.Picture),
-	); profErr != nil {
-		logWarn(r, "oauth: could not update profile on link", "error", profErr, "user_id", existing.ID)
-	}
-	return existing, nil
 }
 
 // ConfirmOAuthLink handles POST /oauth/link/confirm -- consumes the pending-link token
