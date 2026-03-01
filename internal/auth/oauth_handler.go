@@ -243,7 +243,8 @@ func (h *AuthHandler) findOrCreateOAuthUser(r *http.Request, provider string, cl
 // Returns 200 with user_id and csrf_token on success; 400 for invalid/expired token.
 func (h *AuthHandler) ConfirmOAuthLink(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Token string `json:"token"`
+		Token        string `json:"token"`
+		CaptchaToken string `json:"captcha_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		logWarn(r, "confirm oauth link: failed to decode input", "error", err)
@@ -252,6 +253,10 @@ func (h *AuthHandler) ConfirmOAuthLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Token == "" {
 		BadRequest(w, r, "token is required")
+		return
+	}
+
+	if !h.checkCaptcha(w, r, input.CaptchaToken, h.CaptchaCP.ConfirmOAuthLink) {
 		return
 	}
 

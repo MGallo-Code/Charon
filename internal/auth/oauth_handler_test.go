@@ -650,3 +650,43 @@ func TestConfirmOAuthLink_InvalidToken(t *testing.T) {
 
 	assertBadRequest(t, w, "invalid or expired token")
 }
+
+// TestConfirmOAuthLink_CaptchaRejected verifies that a failed captcha check returns 400
+// before the token is ever examined.
+func TestConfirmOAuthLink_CaptchaRejected(t *testing.T) {
+	h := &AuthHandler{
+		PS:        testutil.NewMockStore(),
+		RS:        testutil.NewMockCache(),
+		CV:        &testutil.MockCaptchaVerifier{VerifyErr: errors.New("bad token")},
+		CaptchaCP: CaptchaPolicies{ConfirmOAuthLink: true},
+	}
+	body := strings.NewReader(`{"token":"sometoken","captcha_token":"bad"}`)
+	r := httptest.NewRequest(http.MethodPost, "/oauth/link/confirm", body)
+	w := httptest.NewRecorder()
+
+	h.ConfirmOAuthLink(w, r)
+
+	assertBadRequest(t, w, "captcha verification failed")
+}
+
+// TestConfirmOAuthLink_CaptchaValid verifies that a valid captcha proceeds past the captcha
+// check and reaches token validation.
+func TestConfirmOAuthLink_CaptchaValid(t *testing.T) {
+	// Valid captcha, but bogus token -- expect token error, not captcha error.
+	rawToken, bogusHash, _ := GenerateToken()
+	tokenStr := base64.RawURLEncoding.EncodeToString(rawToken[:])
+	_ = bogusHash
+	h := &AuthHandler{
+		PS:        testutil.NewMockStore(),
+		RS:        testutil.NewMockCache(),
+		CV:        &testutil.MockCaptchaVerifier{},
+		CaptchaCP: CaptchaPolicies{ConfirmOAuthLink: true},
+	}
+	body := strings.NewReader(`{"token":"` + tokenStr + `","captcha_token":"good"}`)
+	r := httptest.NewRequest(http.MethodPost, "/oauth/link/confirm", body)
+	w := httptest.NewRecorder()
+
+	h.ConfirmOAuthLink(w, r)
+
+	assertBadRequest(t, w, "invalid or expired token")
+}

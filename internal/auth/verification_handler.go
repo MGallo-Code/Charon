@@ -111,7 +111,8 @@ func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Req
 // Returns 200 on success, 400 for an invalid/expired token, 500 for DB errors.
 func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Token string `json:"token"`
+		Token        string `json:"token"`
+		CaptchaToken string `json:"captcha_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		logWarn(r, "failed to decode verify email input", "error", err)
@@ -120,6 +121,10 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Token == "" {
 		BadRequest(w, r, "token is required")
+		return
+	}
+
+	if !h.checkCaptcha(w, r, input.CaptchaToken, h.CaptchaCP.VerifyEmail) {
 		return
 	}
 

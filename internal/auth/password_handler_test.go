@@ -3,6 +3,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -549,6 +550,44 @@ func TestPasswordConfirm(t *testing.T) {
 		if body != `{"message":"password updated"}` {
 			t.Errorf("body: expected password updated message, got %q", body)
 		}
+	})
+
+	// -- CAPTCHA --
+
+	t.Run("captcha required, token rejected returns 400", func(t *testing.T) {
+		h := AuthHandler{
+			PS:        &testutil.MockStore{},
+			RS:        testutil.NewMockCache(),
+			CV:        &testutil.MockCaptchaVerifier{VerifyErr: errors.New("bad token")},
+			CaptchaCP: CaptchaPolicies{PasswordConfirm: true},
+		}
+		body := strings.NewReader(`{"token":"sometoken","new_password":"ValidPass1!","captcha_token":"bad"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/confirm", body)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "captcha verification failed")
+	})
+
+	t.Run("captcha required, token valid proceeds past captcha check", func(t *testing.T) {
+		// Valid captcha, valid password, but bogus reset token -- expect token error, not captcha error.
+		raw := make([]byte, 32)
+		rand.Read(raw)
+		bogusToken := base64.RawURLEncoding.EncodeToString(raw)
+		h := AuthHandler{
+			PS:        testutil.NewMockStore(),
+			RS:        testutil.NewMockCache(),
+			CV:        &testutil.MockCaptchaVerifier{},
+			CaptchaCP: CaptchaPolicies{PasswordConfirm: true},
+		}
+		body := strings.NewReader(`{"token":"` + bogusToken + `","new_password":"ValidPass1!","captcha_token":"good"}`)
+		r := httptest.NewRequest(http.MethodPost, "/auth/password/confirm", body)
+		w := httptest.NewRecorder()
+
+		h.PasswordConfirm(w, r)
+
+		assertBadRequest(t, w, "invalid or expired reset token")
 	})
 }
 

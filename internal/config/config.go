@@ -91,7 +91,10 @@ type Config struct {
 	CaptchaRegister             bool
 	CaptchaLogin                bool
 	CaptchaPasswordResetRequest bool
+	CaptchaPasswordConfirm      bool
 	CaptchaResendVerification   bool
+	CaptchaVerifyEmail          bool
+	CaptchaConfirmOAuthLink     bool
 }
 
 // LoadConfig reads environment variables and returns a validated Config.
@@ -223,7 +226,10 @@ func LoadConfig() (*Config, error) {
 	cfg.CaptchaRegister = envBool("SECURITY_CAPTCHA_REGISTER")
 	cfg.CaptchaLogin = envBool("SECURITY_CAPTCHA_LOGIN")
 	cfg.CaptchaPasswordResetRequest = envBool("SECURITY_CAPTCHA_PASSWORD_RESET")
+	cfg.CaptchaPasswordConfirm = envBool("SECURITY_CAPTCHA_PASSWORD_CONFIRM")
 	cfg.CaptchaResendVerification = envBool("SECURITY_CAPTCHA_RESEND_VERIFICATION")
+	cfg.CaptchaVerifyEmail = envBool("SECURITY_CAPTCHA_VERIFY_EMAIL")
+	cfg.CaptchaConfirmOAuthLink = envBool("SECURITY_CAPTCHA_CONFIRM_OAUTH_LINK")
 	if cfg.CaptchaEnabled && cfg.CaptchaSecret == "" {
 		slog.Warn("SECURITY_CAPTCHA_ENABLED=true but SECURITY_CAPTCHA_SECRET is not set: captcha disabled")
 		cfg.CaptchaEnabled = false

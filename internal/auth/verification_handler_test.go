@@ -132,6 +132,40 @@ func TestVerifyEmail(t *testing.T) {
 
 		assertBadRequest(t, w2, "invalid or expired token")
 	})
+
+	// -- CAPTCHA --
+
+	t.Run("captcha required, token rejected returns 400", func(t *testing.T) {
+		h := AuthHandler{
+			PS:        testutil.NewMockStore(),
+			CV:        &testutil.MockCaptchaVerifier{VerifyErr: errors.New("bad token")},
+			CaptchaCP: CaptchaPolicies{VerifyEmail: true},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/verify/email", strings.NewReader(`{"token":"sometoken","captcha_token":"bad"}`))
+		w := httptest.NewRecorder()
+
+		h.VerifyEmail(w, r)
+
+		assertBadRequest(t, w, "captcha verification failed")
+	})
+
+	t.Run("captcha required, token valid proceeds past captcha check", func(t *testing.T) {
+		// Valid captcha but unknown token -- expect token error, not captcha error.
+		raw := make([]byte, 32)
+		rand.Read(raw)
+		bogusToken := base64.RawURLEncoding.EncodeToString(raw)
+		h := AuthHandler{
+			PS:        testutil.NewMockStore(),
+			CV:        &testutil.MockCaptchaVerifier{},
+			CaptchaCP: CaptchaPolicies{VerifyEmail: true},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/verify/email", strings.NewReader(`{"token":"`+bogusToken+`","captcha_token":"good"}`))
+		w := httptest.NewRecorder()
+
+		h.VerifyEmail(w, r)
+
+		assertBadRequest(t, w, "invalid or expired token")
+	})
 }
 
 func TestResendVerificationEmail(t *testing.T) {

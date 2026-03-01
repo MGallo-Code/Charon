@@ -201,12 +201,17 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) PasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	// Decode request body, expect token and new_password
 	var pwdConfirmInput struct {
-		Token       string `json:"token"`
-		NewPassword string `json:"new_password"`
+		Token        string `json:"token"`
+		NewPassword  string `json:"new_password"`
+		CaptchaToken string `json:"captcha_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&pwdConfirmInput); err != nil {
 		logWarn(r, "failed to decode reset password confirm input", "error", err)
 		BadRequest(w, r, "error decoding request body")
+		return
+	}
+
+	if !h.checkCaptcha(w, r, pwdConfirmInput.CaptchaToken, h.CaptchaCP.PasswordConfirm) {
 		return
 	}
 

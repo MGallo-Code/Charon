@@ -142,7 +142,10 @@ type CaptchaPolicies struct {
 	Register             bool
 	Login                bool
 	PasswordResetRequest bool
+	PasswordConfirm      bool
 	ResendVerification   bool
+	VerifyEmail          bool
+	ConfirmOAuthLink     bool
 }
 
 // AuthHandler holds dependencies for all /auth/* HTTP handlers and middleware.

@@ -194,7 +194,10 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 			Register:             cfg.CaptchaRegister,
 			Login:                cfg.CaptchaLogin,
 			PasswordResetRequest: cfg.CaptchaPasswordResetRequest,
+			PasswordConfirm:      cfg.CaptchaPasswordConfirm,
 			ResendVerification:   cfg.CaptchaResendVerification,
+			VerifyEmail:          cfg.CaptchaVerifyEmail,
+			ConfirmOAuthLink:     cfg.CaptchaConfirmOAuthLink,
 		},
 	}
 
