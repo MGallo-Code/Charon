@@ -206,7 +206,13 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	server := &http.Server{Handler: buildRouter(&h)}
+	server := &http.Server{
+		Handler:           buildRouter(&h, max(int64(cfg.MaxBodyBytes), defaultMaxBodyBytes)),
+		ReadHeaderTimeout: 5 * time.Second,  // Slowloris mitigation
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	// Session cleanup goroutine; removes sessions expired >7 days ago, runs every 24h.
 	// Cancelled via cleanupCtx when run() returns.
@@ -270,15 +276,19 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 	return nil
 }
 
+// defaultMaxBodyBytes is the body size limit used when MAX_BODY_BYTES is not set.
+const defaultMaxBodyBytes int64 = 8192
+
 // buildRouter wires all routes and middleware.
 // Called from run() for smoke tests.
-func buildRouter(h *auth.AuthHandler) http.Handler {
+func buildRouter(h *auth.AuthHandler, maxBodyBytes int64) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(limitRequestBody(maxBodyBytes))
 
 	r.Get("/health", h.CheckHealth)
 	r.Get("/oauth/{provider}", h.OAuthRedirect)
@@ -303,6 +313,17 @@ func buildRouter(h *auth.AuthHandler) http.Handler {
 	})
 
 	return r
+}
+
+// limitRequestBody caps the request body size to prevent memory exhaustion.
+// http.MaxBytesReader enforces the limit at the transport layer before any handler reads the body.
+func limitRequestBody(n int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, n)
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // logStartupSummary logs one line per subsystem so operators can verify configuration at a glance.

@@ -57,6 +57,10 @@ type Config struct {
 	RateResendWindow  time.Duration
 	RateResendLockout time.Duration
 
+	// MaxBodyBytes is the request body size limit applied to every endpoint.
+	// Default 8192 (8 KB); prevents memory exhaustion from oversized request bodies.
+	MaxBodyBytes int
+
 	// RequireEmailVerification gates login on email_confirmed_at being set.
 	// Default true; set REQUIRE_EMAIL_VERIFICATION=false to disable.
 	RequireEmailVerification bool
@@ -174,6 +178,8 @@ func LoadConfig() (*Config, error) {
 	cfg.RateResendMax = envInt("RATE_RESEND_MAX", 3)
 	cfg.RateResendWindow = envDuration("RATE_RESEND_WINDOW", 1*time.Hour)
 	cfg.RateResendLockout = envDuration("RATE_RESEND_LOCKOUT", 1*time.Hour)
+
+	cfg.MaxBodyBytes = envInt("MAX_BODY_BYTES", 8192)
 
 	// Default true -- only explicit "false" disables.
 	cfg.RequireEmailVerification = os.Getenv("REQUIRE_EMAIL_VERIFICATION") != "false"

@@ -49,6 +49,7 @@ func TestMain(m *testing.M) {
 		RateResetMax:             3,
 		RateResetWindow:          time.Hour,
 		RateResetLockout:         time.Hour,
+		MaxBodyBytes:             int(defaultMaxBodyBytes),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

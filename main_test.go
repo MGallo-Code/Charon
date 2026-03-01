@@ -61,7 +61,7 @@ func doSmokeLogin(t *testing.T, serverURL string) *http.Response {
 
 // TestSmoke_Health verifies /health is mounted and returns per-dependency status.
 func TestSmoke_Health(t *testing.T) {
-	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t), defaultMaxBodyBytes))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/health")
@@ -90,7 +90,7 @@ func TestSmoke_Health(t *testing.T) {
 
 // TestSmoke_Login_ValidCredentials verifies login sets session cookie and returns CSRF token.
 func TestSmoke_Login_ValidCredentials(t *testing.T) {
-	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t), defaultMaxBodyBytes))
 	defer srv.Close()
 
 	resp := doSmokeLogin(t, srv.URL)
@@ -130,7 +130,7 @@ func TestSmoke_Login_ValidCredentials(t *testing.T) {
 // TestSmoke_Logout_WithoutSession verifies /logout rejects unauthenticated requests
 // (RequireAuth is wired to the protected route group).
 func TestSmoke_Logout_WithoutSession(t *testing.T) {
-	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t), defaultMaxBodyBytes))
 	defer srv.Close()
 
 	// No session cookie -- RequireAuth must reject this
@@ -148,7 +148,7 @@ func TestSmoke_Logout_WithoutSession(t *testing.T) {
 // TestSmoke_Logout_WithSessionButNoCSRF verifies CSRFMiddleware is wired to the protected group.
 // A valid session without the X-CSRF-Token header must be rejected with 403.
 func TestSmoke_Logout_WithSessionButNoCSRF(t *testing.T) {
-	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t), defaultMaxBodyBytes))
 	defer srv.Close()
 
 	// Login -- get a valid session cookie
@@ -186,7 +186,7 @@ func TestSmoke_Logout_WithSessionButNoCSRF(t *testing.T) {
 
 // TestSmoke_LogoutAll_WithoutSession verifies /logout-all rejects unauthenticated requests.
 func TestSmoke_LogoutAll_WithoutSession(t *testing.T) {
-	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t), defaultMaxBodyBytes))
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL+"/logout-all", "application/json", nil)
@@ -202,7 +202,7 @@ func TestSmoke_LogoutAll_WithoutSession(t *testing.T) {
 
 // TestSmoke_LogoutAll_WithSessionButNoCSRF verifies CSRFMiddleware is wired to /logout-all.
 func TestSmoke_LogoutAll_WithSessionButNoCSRF(t *testing.T) {
-	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t), defaultMaxBodyBytes))
 	defer srv.Close()
 
 	loginResp := doSmokeLogin(t, srv.URL)
@@ -238,7 +238,7 @@ func TestSmoke_LogoutAll_WithSessionButNoCSRF(t *testing.T) {
 
 // TestSmoke_FullRoundTrip_LogoutAll verifies login -> logout-all over real HTTP.
 func TestSmoke_FullRoundTrip_LogoutAll(t *testing.T) {
-	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t), defaultMaxBodyBytes))
 	defer srv.Close()
 
 	// Step 1: Login -- capture session cookie and CSRF token
@@ -311,7 +311,7 @@ func TestSmoke_PasswordReset_UnknownEmail(t *testing.T) {
 	mc := testutil.NewMockCache()
 	mailer := &testutil.MockMailer{}
 	h := &auth.AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: mailer}
-	srv := httptest.NewServer(buildRouter(h))
+	srv := httptest.NewServer(buildRouter(h, defaultMaxBodyBytes))
 	defer srv.Close()
 
 	payload := `{"email":"unknown@example.com"}`
@@ -339,7 +339,7 @@ func TestSmoke_PasswordConfirm_InvalidToken(t *testing.T) {
 	mc := testutil.NewMockCache()
 	mailer := &testutil.MockMailer{}
 	h := &auth.AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: mailer}
-	srv := httptest.NewServer(buildRouter(h))
+	srv := httptest.NewServer(buildRouter(h, defaultMaxBodyBytes))
 	defer srv.Close()
 
 	payload := `{"token":"notavalidtoken","new_password":"newpassword1"}`
@@ -367,7 +367,7 @@ func TestSmoke_PasswordReset_FullRoundTrip(t *testing.T) {
 	mc := testutil.NewMockCache()
 	mailer := &testutil.MockMailer{}
 	h := &auth.AuthHandler{PS: ms, RS: mc, RL: &testutil.MockRateLimiter{}, ML: mailer}
-	srv := httptest.NewServer(buildRouter(h))
+	srv := httptest.NewServer(buildRouter(h, defaultMaxBodyBytes))
 	defer srv.Close()
 
 	// Step 1: Request password reset -- expect 200, mailer captures the token.
@@ -422,7 +422,7 @@ func TestSmoke_PasswordReset_FullRoundTrip(t *testing.T) {
 // TestSmoke_FullRoundTrip verifies login -> logout over real HTTP.
 // Exercises cookie passing, CSRF header, and middleware ordering end-to-end.
 func TestSmoke_FullRoundTrip(t *testing.T) {
-	srv := httptest.NewServer(buildRouter(newSmokeHandler(t)))
+	srv := httptest.NewServer(buildRouter(newSmokeHandler(t), defaultMaxBodyBytes))
 	defer srv.Close()
 
 	// Step 1: Login -- capture session cookie and CSRF token

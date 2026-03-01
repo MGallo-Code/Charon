@@ -23,6 +23,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       PORT: ${PORT}
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES}
       LOG_LEVEL: ${LOG_LEVEL}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN}
       COOKIE_SECURE: ${COOKIE_SECURE}
