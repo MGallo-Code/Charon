@@ -22,11 +22,20 @@ const (
 	argonMemory  = uint32(64 * 1024)
 	argonThreads = uint8(2)
 	argonKeyLen  = uint32(32)
+
+	// maxPasswordBytes caps byte length before Argon2id to prevent DoS via
+	// large inputs -- argon2.IDKey receives []byte(password), so byte count
+	// is what matters, not rune count.
+	maxPasswordBytes = 1024
 )
 
 // HashPassword returns PHC-formatted Argon2id hash of plaintext password.
 // Format: $argon2id$v=19$m=65536,t=3,p=2$<base64 salt>$<base64 hash>
 func HashPassword(password string) (string, error) {
+	if len(password) > maxPasswordBytes {
+		return "", fmt.Errorf("password exceeds maximum length")
+	}
+
 	// Gen 16-byte random salt
 	salt := make([]byte, argonSaltLen)
 	_, err := rand.Read(salt)
@@ -52,6 +61,10 @@ func HashPassword(password string) (string, error) {
 // Extracts params from stored hash so old passwords verify after param changes.
 // Uses constant-time comparison to prevent timing attacks.
 func VerifyPassword(password, encodedHash string) (bool, error) {
+	if len(password) > maxPasswordBytes {
+		return false, fmt.Errorf("password exceeds maximum length")
+	}
+
 	// Split PHC string
 	// Format: $argon2id$v=19$m=65536,t=3,p=2$<base64 salt>$<base64 hash>
 	parts := strings.Split(encodedHash, "$")
