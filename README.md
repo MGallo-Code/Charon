@@ -2,6 +2,8 @@
 
 > ***The ferryman who decides who crosses, you're not getting past without him!***
 
+I built this project because I found other auth systems limited in terms of Captcha and rate limiting.
+
 A standalone, session-based authentication service in Go. Can be integrated with any product that needs auth. Contains logic for registration, login, OAuth, email verification, password reset, CSRF protection, rate limiting, and audit logging, all in one place.
 
 > **Note**: Rate limiting works based on content *(For example, logins are limited based on request body's email)*. Services like Kong are expected for any ip-based rate limiting.
