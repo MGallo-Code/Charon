@@ -1,10 +1,12 @@
 # Charon
 
-> ***The ferryman who decides who crosses, you're not getting past without them!***
+> ***The ferryman decides. You wait, you cross, or you sink.***
 
-A standalone, session-based authentication service in Go. Can be integrated with any product that needs auth. Contains logic for registration, login, OAuth, email verification, password reset, CSRF protection, rate limiting, and audit logging, all in one place.
+I built Charon as a solution to an authentication problem I've faced in nearly every full-stack website I've built: _adding captcha verification, content-based rate-limits and caching implementation requires bulky edge functions stacked precariously on existing authentication structures._
 
-I built Charon as a solution to an authentication problem I've faced in nearly every full-stack website I've built: adding captcha verification, content-based rate-limits and caching implementation requires bulky edge functions stacked precariously on existing authentication structures.
+Content-based rate limiting and CAPTCHA are built into this auth service...no messy edge functions necessary!
+
+Charon is a standalone, session-based authentication service in Go, which can be integrated with any product that needs auth.
 
 ---
 
