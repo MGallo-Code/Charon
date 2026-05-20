@@ -1,14 +1,10 @@
 # Charon
 
-> ***The ferryman who decides who crosses, you're not getting past without him!***
-
-I built this project because I found other auth systems limited in terms of Captcha and rate limiting.
+> ***The ferryman who decides who crosses, you're not getting past without them!***
 
 A standalone, session-based authentication service in Go. Can be integrated with any product that needs auth. Contains logic for registration, login, OAuth, email verification, password reset, CSRF protection, rate limiting, and audit logging, all in one place.
 
-> **Note**: Rate limiting works based on content *(For example, logins are limited based on request body's email)*. Services like Kong are expected for any ip-based rate limiting.
-
-Built for production scale!
+I built Charon as a solution to an authentication problem I've faced in nearly every full-stack website I've built: adding captcha verification, content-based rate-limits and caching implementation requires bulky edge functions stacked precariously on existing authentication structures.
 
 ---
 
@@ -160,6 +156,8 @@ Leave `GOOGLE_CLIENT_ID` unset to disable Google sign-in.
 
 Requires Redis. Each endpoint has three modifiers: max attempts, window, and lockout duration.
 
+> **Note**: Rate limiting works based on content *(For example, logins are limited based on request body's email)*. Services like Kong are expected for any ip-based rate limiting.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RATE_LOGIN_EMAIL_MAX` | `10` | Max login attempts before lockout |
@@ -219,3 +217,7 @@ Tests run against a separate test database on port `5433` (see `compose.test.yml
 3. Add a `CHECK` constraint for the new provider name to the `users` and `oauth_pending_links` tables
 
 The generic `OAuthRedirect` and `OAuthCallback` handlers handle the rest.
+
+---
+
+[From what I hear](https://www.youtube.com/watch?v=1-w9HDOVIzQ), every developer rolls their own auth at some point in their career. I appreciate you taking the time to view mine!
