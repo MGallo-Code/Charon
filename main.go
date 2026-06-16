@@ -211,7 +211,7 @@ func run(ctx context.Context, cfg *config.Config, ready chan<- string, ml mail.M
 
 	server := &http.Server{
 		Handler:           buildRouter(&h, max(int64(cfg.MaxBodyBytes), defaultMaxBodyBytes)),
-		ReadHeaderTimeout: 5 * time.Second,  // Slowloris mitigation
+		ReadHeaderTimeout: 5 * time.Second, // Slowloris mitigation
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
