@@ -1,4 +1,4 @@
-.PHONY: run build test vet tidy
+.PHONY: run build test vet tidy migration-check
 
 run:
 	docker compose up --build
@@ -8,6 +8,10 @@ build:
 
 vet:
 	go vet ./...
+
+# Static, DB-free guard for the migration-ordering invariant (INVARIANTS.md INV-1).
+migration-check:
+	go run ./cmd/migration-check
 
 tidy:
 	go mod tidy
